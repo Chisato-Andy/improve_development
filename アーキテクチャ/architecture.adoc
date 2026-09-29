@@ -1,0 +1,5621 @@
+= ドメイン中心アーキテクチャ実務ガイド（依存方向の原則・DDD整合版）
+:toc: left
+:toclevels: 3
+:sectnums:
+:plantuml-server-url: http://www.plantuml.com/plantuml
+:source-highlighter: highlight.js
+
+// 方針
+// - クリーンアーキテクチャはRobert C. Martinが提唱した原則集として正確に扱う
+// - DDDとの関係を詳細に記述
+// - 参照/非参照を明示
+// - 情報量は削らず、むしろ増やす
+
+'''
+
+== ソフトウェアパターンとは
+
+ソフトウェア開発において、私たちは言語やシステムが異なっても、類似した設計上の課題に繰り返し直面します。例えば、「オブジェクトの生成を柔軟にしたい」「データベースアクセスをビジネスロジックから分離したい」「UIの変更がビジネスロジックに影響しないようにしたい」といった課題です。
+
+こうした普遍的な課題に対する、実績のある解決策を体系化したものがソフトウェアパターンです。パターンにはそれぞれ名前が与えられており（例：「Factory Method」「Repository」「MVC」など）、この共通言語を用いることで、開発者同士が複雑な設計思想を正確かつ効率的に共有できます。
+
+パターンは大きく分けて、クラスレベルの設計を扱う「デザインパターン」と、システム全体の構造を扱う「アーキテクチャパターン」があります。本資料では主にアーキテクチャパターンについて、特に依存関係の管理とドメイン中心設計に焦点を当てて解説します。
+
+=== パターンを利用する利点
+
+私たちが直面する設計課題のほとんどは、既に多くの先人たちが解決策を見出しています。確立されたパターンを活用することは、この集合知の上にシステムを構築することを意味し、以下のような利点があります。
+
+==== 前提知識の共有が早い
+「このプロジェクトはヘキサゴナルアーキテクチャを採用します」「クリーンアーキテクチャの原則に従います」と一言伝えるだけで、チームメンバーは設計の全体像を即座に把握できます。依存関係の方向、責務の分割方法、テストの書き方まで、共通の理解が得られます。
+
+==== コミュニティの知見を活用できる
+世界中の開発者によって検証され、改善され続けているため、堅牢性が高い設計を導入できます。書籍、ブログ記事、カンファレンスの発表、GitHubのサンプルコードなど、豊富な情報源から学ぶことができます。問題に直面した時も、同じ課題を解決した先人の知恵を借りることができます。
+
+==== 保守性と拡張性の向上
+パターンに従った設計は、新しいメンバーが参加した際の学習コストを下げます。「このRepositoryパターンは一般的なものだから、基本的な使い方は知っているはず」という前提で会話ができます。
+
+一方で、こうしたパターンを無視した独自の設計、いわゆる「俺的最強アーキテクチャ」を構築することは、大きなリスクを伴います。
+
+==== 「俺的最強アーキテクチャ」のリスク
+
+独自設計は一見革新的に見えるかもしれませんが、実際には以下のような問題を引き起こします：
+
+* **ガラパゴス化**: 世界標準から離れた独自進化により、外部の知見を活用できなくなる
+* **属人化**: 設計者にしか理解できない構造になり、メンテナンスが特定の人に依存する
+* **採用の困難**: 新しいメンバーが参加する際、独自アーキテクチャの学習に膨大な時間がかかる
+* **情報の枯渇**: 問題が発生しても、参考になる情報がネット上に存在しない
+* **車輪の再発明**: 既に解決されている問題に対して、劣った解決策を独自に作ってしまう
+
+世界中で改善され続けている標準的なパターンの上に、プロジェクト固有の要件を積み上げるアプローチの方が、長期的には健全です。
+
+=== パターンの種類
+
+ソフトウェアパターンは、その適用範囲や目的によって、主に以下の種類に分類されます。
+
+==== デザインパターン
+より小規模な範囲で、特定のクラスやオブジェクトの構造・振る舞いを扱うパターンです。Gang of Four（GoF）によって体系化された23のパターンが有名です。
+
+* **生成に関するパターン**: Factory Method、Abstract Factory、Builder、Prototype、Singleton
+* **構造に関するパターン**: Adapter、Bridge、Composite、Decorator、Facade、Flyweight、Proxy
+* **振る舞いに関するパターン**: Chain of Responsibility、Command、Interpreter、Iterator、Mediator、Memento、Observer、State、Strategy、Template Method、Visitor
+
+==== アーキテクチャパターン
+システム全体の構造や骨格を定義する、より大規模なパターンです。システムをどのように分割し、各部分がどのように協調するかを定義します。
+
+* **プレゼンテーション層のパターン**: MVC、MVP、MVVM
+* **アプリケーション構造のパターン**: レイヤードアーキテクチャ、ヘキサゴナルアーキテクチャ、オニオンアーキテクチャ、クリーンアーキテクチャ
+* **分散システムのパターン**: マイクロサービス、サービス指向アーキテクチャ（SOA）、イベント駆動アーキテクチャ
+* **データ管理のパターン**: CQRS、イベントソーシング
+
+本資料では、特にアプリケーション構造のパターンに焦点を当て、依存関係の管理とドメイン中心設計について詳しく解説します。
+
+'''
+
+== なぜアーキテクチャが必要か
+
+ソフトウェアは、機能追加や仕様変更を繰り返すうちに、時間とともに複雑化していきます。初期の段階では単純だったコードも、顧客の要求、ビジネスの成長、技術の進化に伴って、次第に理解しづらくなっていきます。
+
+ここで適切なアーキテクチャ（設計指針）がないと、コンポーネント間の依存関係が複雑に絡み合い、いわゆる「スパゲッティコード」状態に陥ります。スパゲッティコードとは、プログラムの流れが複雑に入り組んで、まるでスパゲッティのように絡み合った状態を指します。
+
+=== スパゲッティコードがもたらす具体的な問題
+
+==== 修正箇所が分からない
+ある機能を変更しようとしても、その機能がどこに実装されているのか、どのファイルのどの部分を修正すればよいのかが特定困難になります。例えば、「商品の価格計算ロジックを変更したい」という要求に対して、そのロジックがUIコード、データベースアクセスコード、APIコントローラーなど、様々な場所に散在していることがあります。
+
+==== 影響範囲が読めない
+一箇所の修正が、予期せぬ別の箇所で不具合を引き起こします。例えば、ユーザー認証の処理を修正したら、なぜか在庫管理機能が動かなくなった、といった事態が発生します。これは、本来独立しているべきコンポーネントが密結合しているために起こります。
+
+==== テストがつらい
+コンポーネントが密結合しているため、単体でのテストが困難になります。例えば、ビジネスロジックをテストしたいだけなのに、データベースを起動し、外部APIのモックを用意し、UIフレームワークを初期化する必要があるといった状況に陥ります。
+
+==== 新機能の追加が困難
+既存のコードがどのように動いているか理解できないため、新機能を追加する際に既存機能を壊してしまうリスクが高まります。結果として、開発速度が著しく低下します。
+
+==== チーム開発が困難
+複数の開発者が同時に作業すると、頻繁にコンフリクトが発生します。また、コードの責任範囲が不明確なため、誰がどの部分を担当すべきかが曖昧になります。
+
+=== 依存方向の管理という解決策
+
+これらの問題を解決する鍵が、**依存方向の管理**です。優れたアーキテクチャは、コンポーネント間の依存関係を適切に整理・制御することで、ソフトウェアの保守性や拡張性を劇的に向上させます。
+
+依存方向の管理とは、具体的には以下のような原則を指します：
+
+* **上位レベルのポリシーが下位レベルの詳細に依存しない**: ビジネスロジックがデータベースの実装詳細に依存しない
+* **安定したものに依存する**: 頻繁に変更される部分が、安定した部分に依存する
+* **抽象に依存する**: 具体的な実装ではなく、インターフェースや抽象クラスに依存する
+
+'''
+
+== アーキテクチャパターンの全体像
+
+アーキテクチャパターンは、どのような視点（関心事）でシステムを捉えるかによって、いくつかの種類に分類されます。それぞれの視点は異なる問題を解決することを目的としており、多くの場合、複数のパターンを組み合わせて使用します。
+
+[.scrollable-block]
+[options="header", cols="1,2,3"]
+|===
+| 視点 | 目的・関心事 | 代表的なアーキテクチャ
+
+| アプリ全体の構造
+| システム全体をどう分割・配置するか
+| モノリシック、マイクロサービス、モジュラーモノリス、SOA
+
+| アプリ内部の設計
+| 1つのアプリ内のコードをどう整理するか
+| レイヤード、MVC、オニオンアーキテクチャ、ヘキサゴナルアーキテクチャ、クリーンアーキテクチャ
+
+| 通信・データ連携
+| コンポーネント同士がどう対話するか
+| イベント駆動、メッセージキュー、Pub/Sub、CQRS
+
+| インフラ・実行環境
+| どこで、どのように動かすか
+| クラウドネイティブ、サーバーレス、コンテナベース、エッジコンピューティング
+
+| データ管理
+| データをどのように保存・管理するか
+| マスターデータ管理、データレイク、データメッシュ、イベントソーシング
+
+| セキュリティ
+| セキュリティをどう確保するか
+| ゼロトラスト、Defense in Depth、セキュアバイデザイン
+|===
+
+=== アプリ内部の設計に関する主要パターン
+
+オブジェクト指向言語を用いたモダンな開発において、特に重要なアーキテクチャパターンを詳しく見ていきましょう。
+
+==== レイヤードアーキテクチャ
+最も基本的なパターンで、アプリケーションを複数の層（レイヤー）に分割します。一般的には以下の4層構成です：
+
+* **プレゼンテーション層**: ユーザーインターフェース、入出力の処理
+* **アプリケーション層**: ユースケースの調整、トランザクション管理
+* **ドメイン層**: ビジネスロジック、ビジネスルール
+* **インフラストラクチャ層**: データベースアクセス、外部サービス連携
+
+伝統的なレイヤードアーキテクチャでは、依存は上から下へ一方向に流れます。しかし、この構造には問題があり、ドメイン層がインフラストラクチャ層に依存してしまうため、ビジネスロジックが技術的詳細に縛られてしまいます。
+
+==== オニオンアーキテクチャ
+Jeffrey Palermoによって2008年に提唱されたアーキテクチャです。同心円状の構造を持ち、依存関係は外側から内側へ向かいます。中心にドメインモデルを置き、外側に向かってドメインサービス、アプリケーションサービス、インフラストラクチャと配置されます。
+
+特徴：
+* ドメインモデルが中心にあり、何にも依存しない
+* 依存性逆転の原則（DIP）を活用
+* インフラストラクチャは最外層に位置する
+
+==== ヘキサゴナルアーキテクチャ（Ports and Adapters）
+Alistair Cockburnによって2005年に提唱されたアーキテクチャです。アプリケーションを六角形として表現し、各辺にポート（インターフェース）を配置します。外部システムとの接続はアダプターを通じて行います。
+
+特徴：
+* アプリケーションの核（ドメイン）を技術的詳細から隔離
+* ポート：アプリケーションが定義する契約（インターフェース）
+* アダプター：ポートを実装し、外部システムと接続する
+* テスタビリティの向上（アダプターを差し替えてテスト可能）
+
+「ヘキサゴナル」という名前は、図を描く際に六角形を使うことから来ていますが、辺の数に特別な意味はありません。重要なのは「内側（ビジネスロジック）」と「外側（技術的詳細）」を明確に分離することです。
+
+==== クリーンアーキテクチャ
+Robert C. Martin（通称Uncle Bob）によって2012年に提唱された、アーキテクチャの原則と構造です。これは特定の実装方法を指すものではなく、優れたアーキテクチャが持つべき原則を整理したものです。
+
+クリーンアーキテクチャは、以下の原則を満たすことを目指します：
+
+* **フレームワーク独立**: アーキテクチャは特定のフレームワークに依存しない
+* **テスト可能**: ビジネスルールはUI、データベース、外部サービスなしでテストできる
+* **UI独立**: UIを変更してもビジネスルールは変更不要
+* **データベース独立**: データベースを変更してもビジネスルールは変更不要
+* **外部サービス独立**: ビジネスルールは外部世界について何も知らない
+
+クリーンアーキテクチャの同心円図では、以下の4つの層が定義されています（内側から）：
+
+1. **Entities（エンティティ）**: 企業全体のビジネスルール、最も重要で安定した部分
+2. **Use Cases（ユースケース）**: アプリケーション固有のビジネスルール
+3. **Interface Adapters（インターフェースアダプター）**: データ変換、プレゼンター、コントローラー
+4. **Frameworks & Drivers（フレームワークとドライバー）**: 最も詳細な部分、Web、DB、外部サービス
+
+重要な点は、これら3つのアーキテクチャ（オニオン、ヘキサゴナル、クリーン）は、表現方法や強調点は異なるものの、本質的には同じことを言っているということです。すべて「**依存関係は内側に向かう**」「**ビジネスロジックを技術的詳細から保護する**」という原則を共有しています。
+
+==== ドメイン駆動設計（DDD）との関係
+
+ドメイン駆動設計（Domain-Driven Design, DDD）は、Eric Evansによって2003年に提唱された、複雑なソフトウェアの設計手法です。DDDは、ビジネスの専門家と開発者が共通の言語（ユビキタス言語）を使って、ビジネスの核心となる領域（ドメイン）をソフトウェアモデルとして直接表現することを目指します。
+
+===== DDDの主要な概念
+
+**戦術的設計要素**：
+* **Entity（エンティティ）**: 識別子によって区別され、ライフサイクルを持つオブジェクト
+* **Value Object（値オブジェクト）**: 値によって区別され、不変であることが多いオブジェクト
+* **Aggregate（集約）**: 一貫性境界を定義する関連オブジェクトのまとまり
+* **Repository（リポジトリ）**: 集約の永続化と取得を抽象化
+* **Domain Service（ドメインサービス）**: 特定のエンティティに属さないドメインロジック
+* **Domain Event（ドメインイベント）**: ドメインで起きた重要な出来事
+
+**戦略的設計要素**：
+* **Bounded Context（境界づけられたコンテキスト）**: モデルが適用される明確な境界
+* **Context Map（コンテキストマップ）**: 複数のBounded Context間の関係
+* **Ubiquitous Language（ユビキタス言語）**: チーム全体で共有される共通言語
+
+===== なぜDDDとこれらのアーキテクチャは相性が良いのか
+
+クリーンアーキテクチャ、ヘキサゴナルアーキテクチャ、オニオンアーキテクチャは、すべてDDDと非常に相性が良いとされています。その理由は以下の通りです：
+
+1. **ドメインモデルの保護**: これらのアーキテクチャは、ドメインモデルを中心に置き、技術的詳細から保護します。これはDDDが目指す「ドメインモデルの純粋性」と完全に一致します。
+
+2. **用語の親和性**: 特にクリーンアーキテクチャは、DDDの用語（Entity、Use Case、Repository）を直接使用しており、DDDプラクティショナーにとって理解しやすい構造になっています。
+
+3. **レイヤーの分離**: DDDが推奨する「ドメイン層」「アプリケーション層」「インフラストラクチャ層」の分離が、これらのアーキテクチャでも実現されています。
+
+4. **依存性逆転**: DDDのRepositoryパターンは、まさに依存性逆転の原則（DIP）の実装例です。ドメインがRepositoryインターフェースを定義し、インフラストラクチャ層が実装を提供します。
+
+===== Robert C. MartinとDDDの関係
+
+クリーンアーキテクチャの提唱者であるRobert C. Martinは、DDDの影響を明確に認めています。クリーンアーキテクチャの原著「Clean Architecture: A Craftsman's Guide to Software Structure and Design」では、Eric EvansのDDDを参照し、その概念を取り入れています。
+
+特に以下の点でDDDの影響が見られます：
+
+* **Entityの概念**: クリーンアーキテクチャの最も内側の円にある「Entities」は、DDDのEntityとほぼ同じ概念
+* **Use Casesの配置**: アプリケーション固有のビジネスルールを扱う層は、DDDのアプリケーションサービスに相当
+* **Repositoryパターン**: インターフェースアダプター層でのRepositoryの使用
+
+ただし、重要な点として、クリーンアーキテクチャ＝DDDではありません。クリーンアーキテクチャはより広範な原則を扱い、DDDは主にドメインモデリングの手法に焦点を当てています。両者は補完関係にあり、組み合わせて使用することで、より強力な設計が可能になります。
+
+'''
+
+== 良いアーキテクチャの本質
+
+良いアーキテクチャが目指すのは、究極的には以下の3点です。これらは相互に関連し、補強し合う関係にあります。
+
+=== ビジネスの核心（ドメイン）に集中できること
+
+ソフトウェアが本当に実現したいのは、ビジネス上の課題解決です。例えば、ECサイトであれば「商品を検索して購入する」「在庫を管理する」「配送を手配する」といったビジネスプロセスの実現が本質です。
+
+しかし、実際のコードを書く際には、多くの技術的な詳細に対処する必要があります：
+
+* データベースへの接続とSQL文の実行
+* HTTPリクエストの処理とレスポンスの生成
+* 外部APIの呼び出しとエラーハンドリング
+* ログの出力とモニタリング
+* キャッシュの管理
+
+例えば「出庫フロー」を実装する際、本来考えたいのは以下のようなビジネスロジックです：
+
+[source,text]
+----
+1. 出庫対象の商品が存在するか確認
+2. 在庫数が出庫数以上あるか確認
+3. 在庫を減らす
+4. 出庫履歴を記録する
+5. 必要に応じて発注点に達したら補充依頼を作成
+----
+
+しかし、コードの途中でJDBCのお作法に従ってデータベース接続処理を書き始めると、それは「出庫フロー」という本来の関心事から見ればただのノイズです。
+
+[source,java]
+----
+// 悪い例：ビジネスロジックと技術的詳細が混在
+public void processShipment(String itemId, int quantity) {
+    Connection conn = null;
+    PreparedStatement ps = null;
+    try {
+        // データベース接続（技術的詳細）
+        conn = DriverManager.getConnection("jdbc:mysql://localhost:3306/inventory", "user", "pass");
+        
+        // 在庫確認（ビジネスロジック）
+        ps = conn.prepareStatement("SELECT quantity FROM items WHERE id = ?");
+        ps.setString(1, itemId);
+        ResultSet rs = ps.executeQuery();
+        
+        if (rs.next()) {
+            int currentQuantity = rs.getInt("quantity");
+            
+            // ビジネスルールの判定
+            if (currentQuantity < quantity) {
+                throw new InsufficientStockException();
+            }
+            
+            // 在庫更新（技術的詳細とビジネスロジックが混在）
+            ps = conn.prepareStatement("UPDATE items SET quantity = ? WHERE id = ?");
+            ps.setInt(1, currentQuantity - quantity);
+            ps.setString(2, itemId);
+            ps.executeUpdate();
+            
+            // ログ出力（技術的詳細）
+            logger.info("Shipped " + quantity + " units of " + itemId);
+        }
+    } catch (SQLException e) {
+        // エラーハンドリング（技術的詳細）
+        logger.error("Database error", e);
+    } finally {
+        // リソース解放（技術的詳細）
+        // ...
+    }
+}
+----
+
+このような技術的詳細は別のクラスに委譲し、本体はビジネスロジックに専念するべきです（単一責任の原則：SRP）。
+
+[source,java]
+----
+// 良い例：ビジネスロジックに集中
+public class ShipmentService {
+    private final ItemRepository repository;
+    
+    public void processShipment(String itemId, int quantity) {
+        Item item = repository.findById(itemId)
+            .orElseThrow(() -> new ItemNotFoundException(itemId));
+        
+        // ビジネスロジックが明確に表現されている
+        if (!item.hasEnoughStock(quantity)) {
+            throw new InsufficientStockException(itemId, quantity, item.getQuantity());
+        }
+        
+        item.ship(quantity);
+        repository.save(item);
+        
+        if (item.needsReplenishment()) {
+            replenishmentService.createOrder(item);
+        }
+    }
+}
+----
+
+関心事を分離することで、ビジネスルールだけが記述された純粋なクラスが生まれ、それはそのままシステムの仕様書にもなり得ます。
+
+=== 技術的な詳細から分離できること
+
+システムは、UIフレームワーク、データベース、外部APIなど、様々な技術的詳細の上で成り立っています。これらの技術は時間とともに変化し、バージョンアップやリプレイスが必要になります。
+
+具体的な変更シナリオを考えてみましょう：
+
+==== UIフレームワークの変更
+* jQuery → React への移行
+* サーバーサイドレンダリング → SPA への変更
+* Web → モバイルアプリへの展開
+
+==== データベースの変更
+* Oracle → PostgreSQL への移行
+* RDBMS → NoSQL への変更
+* オンプレミス → クラウドマネージドDBへの移行
+
+==== 外部サービスの変更
+* 決済サービスの乗り換え（Stripe → Square）
+* 通知サービスの変更（SendGrid → Amazon SES）
+* 認証プロバイダーの変更（自前実装 → Auth0）
+
+これらの変更の際に、「UIをリメイクするために、ビジネスロジック全体に修正が必要になる」あるいは「データベースをOracleからPostgreSQLへ移行するために、アプリケーションのほぼ全てのコードを書き換える」といった事態は避けたいはずです。
+
+アーキテクチャによって、UIやDBといった技術的関心事がビジネスロジック本体からうまく分離されていれば、変更の影響を最小限に留めることができます。
+
+[source,text]
+----
+変更前：Oracle Database
+変更後：PostgreSQL
+
+影響範囲（良い設計の場合）：
+- RepositoryのOracle実装クラス → PostgreSQL実装クラスへの差し替え
+- 設定ファイルの変更
+- 以上
+
+影響範囲（悪い設計の場合）：
+- 全てのビジネスロジッククラス（SQL文の修正）
+- 全てのテストコード（テスト用DBの変更）
+- エラーハンドリング（Oracle固有のエラーコード処理）
+- トランザクション管理（方言の違いへの対応）
+----
+
+=== 柔軟なコンポーネントの組み合わせ（継承より委譲）
+
+本資料で紹介するアーキテクチャは、「継承より委譲（Composition over Inheritance）」というオブジェクト指向の重要な原則を体現しています。
+
+==== 継承の問題点
+
+継承は強力な機能ですが、過度に使用すると以下の問題を引き起こします：
+
+[source,java]
+----
+// 悪い例：継承による機能拡張
+public class DatabaseUserService extends OracleDatabaseConnection {
+    public User findUser(String id) {
+        Connection conn = getConnection(); // 親クラスから継承
+        // ...
+    }
+}
+
+// 問題：PostgreSQLに変更したい場合、継承階層全体を変更する必要がある
+public class DatabaseUserService extends PostgreSQLDatabaseConnection { // 全体を書き換え
+    // ...
+}
+----
+
+継承は「is-a」関係を表現するものであり、実装の再利用のために使うと、以下の問題が生じます：
+
+* **脆弱な基底クラス問題**: 親クラスの変更が全ての子クラスに影響
+* **ダイヤモンド継承問題**: 多重継承による複雑性
+* **柔軟性の欠如**: 実行時に振る舞いを変更できない
+
+==== 委譲による解決
+
+委譲（Composition）は、それぞれが単一の責務を持つ小さなオブジェクトを組み合わせる（処理を委譲する）ことでシステムを構築する考え方です：
+
+[source,java]
+----
+// 良い例：委譲による機能の組み合わせ
+public class UserService {
+    private final UserRepository repository;  // 委譲先
+    private final NotificationService notifier;  // 委譲先
+    
+    public UserService(UserRepository repository, NotificationService notifier) {
+        this.repository = repository;
+        this.notifier = notifier;
+    }
+    
+    public void registerUser(User user) {
+        repository.save(user);  // データ永続化を委譲
+        notifier.sendWelcomeEmail(user);  // 通知を委譲
+    }
+}
+----
+
+例えば、`Usecase`が`Service`に、`Service`が`Repository`に処理を委譲するように、各コンポーネントが連携して動作します：
+
+[source,text]
+----
+Controller
+    ↓ 委譲
+Application
+    ↓ 委譲
+Usecase
+    ↓ 委譲
+Service
+    ↓ 委譲
+Repository
+----
+
+このアプローチにより：
+
+* **各コンポーネントの独立性が高まる**: 単一責任の原則に従い、各クラスは一つのことだけを行う
+* **差し替えが容易**: インターフェースを介して委譲することで、実装の差し替えが可能
+* **テストしやすい**: モックオブジェクトを注入してテスト可能
+* **再利用性が高い**: 小さなコンポーネントは様々な文脈で再利用できる
+
+結果として、柔軟で差し替え可能、かつテストしやすい疎結合な設計が実現できます。
+
+'''
+
+== 依存性逆転の原則（DIP）
+
+前述の「ビジネスの核心への集中」と「技術的詳細からの分離」を実現する核となるテクニックが**依存性逆転の原則（Dependency Inversion Principle, DIP）**です。
+
+DIPは、SOLID原則の一つとして、Robert C. Martinによって定式化されました。その内容は以下の2つの規則で表現されます：
+
+1. **上位レベルのモジュールは下位レベルのモジュールに依存してはならない。両者は抽象に依存すべきである。**
+2. **抽象は詳細に依存してはならない。詳細が抽象に依存すべきである。**
+
+これを具体的に言い換えると：
+
+* ビジネスロジック（上位）はデータベースアクセス（下位）の具体的な実装に依存してはならない
+* 両者はインターフェース（抽象）を介して関係を持つべきである
+* インターフェースはビジネス側が定義し、データベース側がそれを実装する
+
+クリーンアーキテクチャなどの同心円状の図では、最も重要なドメインロジックが中心に配置されます。変更に晒されたくないこの中心部は、何にも依存しないのが理想です。しかし、データベースへの保存など、どうしても外部の機能を使いたい場面は存在します。
+
+その矛盾を解決するのがDIPです。
+
+image::2025-09-08T06-10-38-428Z.png[]
+
+=== 具体例：出庫フローとデータベース
+
+実際のコードを通じて、DIPがどのように問題を解決するか見ていきましょう。
+
+==== ステップ1：直接的な依存の問題
+
+最初に、多くの開発者が書いてしまいがちな、直接的な依存を持つコードを見てみます：
+
+[source,java]
+----
+// 出庫フロークラスの中に、DB接続という技術的詳細が混入している
+public class RetrievalFlow {
+    public void execute(String itemCode, int quantity) {
+        Connection con = null;
+        PreparedStatement ps = null;
+        try {
+            // DB接続情報やSQLがクラス内にハードコードされている
+            con = DriverManager.getConnection(
+                "jdbc:oracle:thin:@localhost:1521:inventory", 
+                "user", 
+                "password"
+            );
+            
+            // 在庫確認のSQL
+            String checkSql = "SELECT ITEM_CODE, ITEM_NAME, QUANTITY FROM DMITEM WHERE ITEM_CODE = ?";
+            ps = con.prepareStatement(checkSql);
+            ps.setString(1, itemCode);
+            ResultSet rs = ps.executeQuery();
+            
+            if (rs.next()) {
+                int currentQuantity = rs.getInt("QUANTITY");
+                String itemName = rs.getString("ITEM_NAME");
+                
+                // ビジネスロジック（これが本来書きたいこと）
+                if (currentQuantity < quantity) {
+                    throw new InsufficientStockException(
+                        "在庫不足: " + itemName + " (現在庫: " + currentQuantity + ")"
+                    );
+                }
+                
+                // 在庫更新のSQL
+                String updateSql = "UPDATE DMITEM SET QUANTITY = QUANTITY - ? WHERE ITEM_CODE = ?";
+                ps = con.prepareStatement(updateSql);
+                ps.setInt(1, quantity);
+                ps.setString(2, itemCode);
+                ps.executeUpdate();
+                
+                // 出庫履歴の記録
+                String historySql = "INSERT INTO SHIPMENT_HISTORY (ITEM_CODE, QUANTITY, SHIPPED_AT) VALUES (?, ?, ?)";
+                ps = con.prepareStatement(historySql);
+                ps.setString(1, itemCode);
+                ps.setInt(2, quantity);
+                ps.setTimestamp(3, new Timestamp(System.currentTimeMillis()));
+                ps.executeUpdate();
+                
+                con.commit();
+            } else {
+                throw new ItemNotFoundException("商品が見つかりません: " + itemCode);
+            }
+        } catch (SQLException e) {
+            // SQL例外の処理
+            if (con != null) {
+                try {
+                    con.rollback();
+                } catch (SQLException ex) {
+                    // ロールバック失敗
+                }
+            }
+            throw new DatabaseException("データベースエラー", e);
+        } finally {
+            // リソース解放処理
+            if (ps != null) {
+                try { ps.close(); } catch (SQLException e) { }
+            }
+            if (con != null) {
+                try { con.close(); } catch (SQLException e) { }
+            }
+        }
+    }
+}
+----
+
+この実装の問題点：
+
+* **ビジネスロジックが埋もれている**: 在庫確認と減算という本質的な処理が、大量の技術的詳細に埋もれている
+* **テストが困難**: このメソッドをテストするには、実際のOracleデータベースが必要
+* **変更に弱い**: データベースをMySQLに変更する場合、このクラス全体を書き換える必要がある
+* **再利用不可能**: 別のプロジェクトで同じビジネスロジックを使いたくても、Oracle依存のため使えない
+
+==== ステップ2：クラス分離だけでは不十分
+
+次に、「データベースアクセスを別クラスに分離すれば良いのでは？」という発想で改善を試みます：
+
+[source,java]
+----
+// DBアクセスを別クラスに分離
+public class ItemRepository {
+    private final String connectionString;
+    private final String username;
+    private final String password;
+    
+    public ItemRepository(String connectionString, String username, String password) {
+        this.connectionString = connectionString;
+        this.username = username;
+        this.password = password;
+    }
+    
+    public Item getItem(String itemCode) {
+        // JDBC処理
+        Connection con = null;
+        PreparedStatement ps = null;
+        try {
+            con = DriverManager.getConnection(connectionString, username, password);
+            ps = con.prepareStatement("SELECT * FROM DMITEM WHERE ITEM_CODE = ?");
+            ps.setString(1, itemCode);
+            ResultSet rs = ps.executeQuery();
+            
+            if (rs.next()) {
+                return new Item(
+                    rs.getString("ITEM_CODE"),
+                    rs.getString("ITEM_NAME"),
+                    rs.getInt("QUANTITY")
+                );
+            }
+            return null;
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to get item", e);
+        } finally {
+            // リソース解放
+        }
+    }
+    
+    public void updateQuantity(String itemCode, int newQuantity) {
+        // JDBC処理
+    }
+    
+    public void saveShipmentHistory(ShipmentHistory history) {
+        // JDBC処理
+    }
+}
+
+// RetrievalFlowは具象クラス（ItemRepository）に依存している
+public class RetrievalFlow {
+    private final ItemRepository itemRepository;
+    
+    public RetrievalFlow(ItemRepository itemRepository) {
+        this.itemRepository = itemRepository;
+    }
+    
+    public void execute(String itemCode, int quantity) {
+        Item item = itemRepository.getItem(itemCode);
+        if (item == null) {
+            throw new ItemNotFoundException("商品が見つかりません: " + itemCode);
+        }
+        
+        if (item.getQuantity() < quantity) {
+            throw new InsufficientStockException(
+                "在庫不足: " + item.getName() + " (現在庫: " + item.getQuantity() + ")"
+            );
+        }
+        
+        itemRepository.updateQuantity(itemCode, item.getQuantity() - quantity);
+        itemRepository.saveShipmentHistory(
+            new ShipmentHistory(itemCode, quantity, LocalDateTime.now())
+        );
+    }
+}
+----
+
+一見改善されたように見えますが、`RetrievalFlow`は依然として具象クラスである`ItemRepository`に依存しています。これでは：
+
+* **テストの問題は解決していない**: `ItemRepository`の実装がJDBCに依存しているため、テスト時にデータベースが必要
+* **差し替えが困難**: 別の実装（例：REST API経由でのアクセス）に変更する場合、`RetrievalFlow`の修正が必要
+* **依存の方向が間違っている**: ビジネスロジックが技術的詳細に依存している
+
+==== ステップ3：インターフェースによる解決（DIPの適用）
+
+そこで、間に**インターフェース**を挟みます。重要なのは、**そのインターフェースをビジネスロジック側（Domain層）に定義する**ことです：
+
+[source,java]
+----
+// ========== Domain層（ビジネスロジック側）==========
+
+// Domain層に定義されるインターフェース
+// ドメイン層は「こういう機能が欲しい」という契約（I/F）を定義する
+public interface IItemRepository {
+    Item getItem(String itemCode);
+    void updateQuantity(String itemCode, int newQuantity);
+    void saveShipmentHistory(ShipmentHistory history);
+}
+
+// Domain層に定義されるビジネスロジック
+// このクラスは具象クラスではなく、自らが定義したインターフェースにのみ依存する
+public class RetrievalFlow {
+    private final IItemRepository itemRepository;
+    
+    public RetrievalFlow(IItemRepository itemRepository) {
+        this.itemRepository = itemRepository;
+    }
+    
+    public void execute(String itemCode, int quantity) {
+        // ビジネスロジックが明確に表現されている
+        Item item = itemRepository.getItem(itemCode);
+        if (item == null) {
+            throw new ItemNotFoundException("商品が見つかりません: " + itemCode);
+        }
+        
+        // 在庫確認（ビジネスルール）
+        if (item.getQuantity() < quantity) {
+            throw new InsufficientStockException(
+                "在庫不足: " + item.getName() + " (現在庫: " + item.getQuantity() + ")"
+            );
+        }
+        
+        // 在庫更新（ビジネスロジック）
+        item.ship(quantity);  // ドメインモデルに振る舞いを持たせる
+        itemRepository.updateQuantity(itemCode, item.getQuantity());
+        
+        // 履歴記録（ビジネス要件）
+        ShipmentHistory history = new ShipmentHistory(itemCode, quantity, LocalDateTime.now());
+        itemRepository.saveShipmentHistory(history);
+    }
+}
+
+// ========== Infrastructure層（技術的詳細）==========
+
+// 外部の技術的詳細を担う層が、ドメイン層のI/Fを「実装」する
+public class OracleItemRepository implements IItemRepository {
+    private final DataSource dataSource;
+    
+    public OracleItemRepository(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+    
+    @Override
+    public Item getItem(String itemCode) {
+        // Oracle DBに接続してItemを取得する具体的な実装
+        try (Connection con = dataSource.getConnection();
+             PreparedStatement ps = con.prepareStatement(
+                 "SELECT ITEM_CODE, ITEM_NAME, QUANTITY FROM DMITEM WHERE ITEM_CODE = ?"
+             )) {
+            ps.setString(1, itemCode);
+            ResultSet rs = ps.executeQuery();
+            
+            if (rs.next()) {
+                return new Item(
+                    rs.getString("ITEM_CODE"),
+                    rs.getString("ITEM_NAME"),
+                    rs.getInt("QUANTITY")
+                );
+            }
+            return null;
+        } catch (SQLException e) {
+            throw new InfrastructureException("Failed to get item from Oracle", e);
+        }
+    }
+    
+    @Override
+    public void updateQuantity(String itemCode, int newQuantity) {
+        // Oracle特有のSQL実装
+    }
+    
+    @Override
+    public void saveShipmentHistory(ShipmentHistory history) {
+        // Oracle特有のSQL実装
+    }
+}
+
+// 別の実装も簡単に作れる
+public class MongoItemRepository implements IItemRepository {
+    private final MongoCollection<Document> collection;
+    
+    @Override
+    public Item getItem(String itemCode) {
+        // MongoDB用の実装
+        Document doc = collection.find(eq("itemCode", itemCode)).first();
+        if (doc != null) {
+            return new Item(
+                doc.getString("itemCode"),
+                doc.getString("itemName"),
+                doc.getInteger("quantity")
+            );
+        }
+        return null;
+    }
+    
+    // 他のメソッドも同様にMongoDB用に実装
+}
+----
+
+これが依存性逆転の原則の核心です。
+
+=== なぜインターフェースが有効なのか：認知負荷の軽減
+
+開発者の視点では、以下のような思考の変化が生まれます：
+
+==== クラスに依存する場合の思考プロセス
+
+[source,text]
+----
+開発者の頭の中：
+「この ItemRepository クラスとは何だ？」
+「実装はどうなっている？」
+「Oracleを使っているのか？MySQLか？」
+「接続プールは使っているか？」
+「トランザクション管理はどうなっている？」
+「何か特殊な注意点はないか？」
+「バグはないか？」
+
+→ 結局、実装の詳細まで見に行ってしまう
+→ 本来のビジネスロジックの理解に集中できない
+----
+
+==== インターフェースに依存する場合の思考プロセス
+
+[source,text]
+----
+開発者の頭の中：
+「これは IItemRepository インターフェースか」
+「getItem() で商品を取得できる」
+「updateQuantity() で数量を更新できる」
+「実装の詳細は知る必要はない」
+「テストではモックを使えばいい」
+
+→ 使い方（メソッドシグネチャ）と戻り値だけを理解すればよい
+→ 本来の責務である「出庫フロー」に集中できる
+----
+
+これにより、開発者は本来の責務である「出庫のフロー」に集中でき、認知的な負荷を下げることができます。
+
+また、コードレビューの際も：
+
+* レビュアーは実装の詳細を追う必要がない
+* インターフェースの契約が満たされているかだけを確認すればよい
+* ビジネスロジックの正しさに集中できる
+
+=== なぜ「逆転」なのか？
+
+依存関係の方向が文字通り「逆転」するからです。下の図を見れば一目瞭然です。
+
+.Before (従来の依存)
+[plantuml]
+----
+@startuml
+skinparam componentStyle uml2
+skinparam rectangle {
+    BackgroundColor White
+    BorderColor Black
+}
+
+package "Domain (ビジネスロジック)" as Domain {
+    rectangle "出庫フロークラス" as ShipmentFlow
+}
+package "Infrastructure (技術的詳細)" as Infrastructure {
+    rectangle "DBやり取りクラス" as DbAccess
+}
+
+ShipmentFlow ..> DbAccess : 依存
+note bottom of ShipmentFlow : 上位が下位に依存している\n（良くない）
+@enduml
+----
+
+.After (DIP適用後)
+[plantuml]
+----
+@startuml
+skinparam componentStyle uml2
+skinparam rectangle {
+    BackgroundColor White
+    BorderColor Black
+}
+
+package "Domain (ビジネスロジック)" as Domain {
+    rectangle "出庫フロークラス" as ShipmentFlowDIP
+    interface "IItemRepository" as IDbAccess
+}
+
+package "Infrastructure (技術的詳細)" as Infrastructure {
+    rectangle "OracleItemRepository" as DbAccessImpl
+}
+
+' 依存関係を定義
+ShipmentFlowDIP ..> IDbAccess : 依存
+DbAccessImpl ..|> IDbAccess : 実装
+
+' インフラ層からドメイン層への依存の矢印を明示
+Infrastructure ..> Domain : 依存の方向が逆転
+note bottom : 下位（詳細）が上位（抽象）に依存\n依存の方向が逆転した！
+@enduml
+----
+
+詳しく説明すると：
+
+**従来の依存関係**：
+1. `出庫フロークラス`（高レベル/ビジネス中心）が `DBやり取りクラス`（低レベル/技術的詳細）に直接依存
+2. 矢印の向きは「ビジネス → 技術」
+3. これは自然に見えるが、実は問題がある
+
+**DIP適用後の依存関係**：
+1. `出庫フロークラス`（高レベル）は、自らが定義した `IItemRepository` インターフェースに依存
+2. `OracleItemRepository`（低レベル）も、同じ `IItemRepository` を実装することで、`Domain`層に依存
+3. 結果として、`Infrastructure`層が`Domain`層に依存する形になる
+4. 矢印の向きは「技術 → ビジネス」に逆転
+
+この「逆転」により、ビジネスロジックが技術的詳細から独立し、技術的詳細の方がビジネスロジックに合わせる形になります。
+
+NOTE: ここでいう`Infrastructure`層とは、データベース、外部API、Webフレームワークなど、アプリケーションの関心事の外側にある技術的な詳細を実装する層を指します。
+
+=== テスト容易性の向上
+
+依存性を逆転させることの最大のメリットの一つが、この**テスト容易性の向上**です。
+
+`RetrievalFlow`クラスは、`IItemRepository`という「契約」にのみ依存しているため、その契約を守るもの（実装クラス）が何であるかを知りません。この性質を利用すると、テスト時に本物のデータベースの代わりに、テスト用の偽物（モック）を簡単に差し込むことができます。
+
+==== テスト用のモック実装
+
+[source,java]
+----
+// テストコード内で、テスト用の実装（モック）を定義する
+public class MockItemRepository implements IItemRepository {
+    private Map<String, Item> items = new HashMap<>();
+    private List<ShipmentHistory> histories = new ArrayList<>();
+    
+    // テストデータの準備
+    public void addTestItem(Item item) {
+        items.put(item.getItemCode(), item);
+    }
+    
+    @Override
+    public Item getItem(String itemCode) {
+        // DBに接続せず、メモリ上のテストデータを返す
+        return items.get(itemCode);
+    }
+    
+    @Override
+    public void updateQuantity(String itemCode, int newQuantity) {
+        // メモリ上のデータを更新
+        Item item = items.get(itemCode);
+        if (item != null) {
+            item.setQuantity(newQuantity);
+        }
+    }
+    
+    @Override
+    public void saveShipmentHistory(ShipmentHistory history) {
+        // メモリ上のリストに追加
+        histories.add(history);
+    }
+    
+    // テスト検証用のメソッド
+    public List<ShipmentHistory> getHistories() {
+        return new ArrayList<>(histories);
+    }
+}
+
+// テストの実行コード
+public class RetrievalFlowTest {
+    @Test
+    public void 正常な出庫処理のテスト() {
+        // Arrange
+        MockItemRepository mockRepository = new MockItemRepository();
+        mockRepository.addTestItem(new Item("ITEM001", "テスト商品", 100));
+        
+        RetrievalFlow retrievalFlow = new RetrievalFlow(mockRepository);
+        
+        // Act
+        retrievalFlow.execute("ITEM001", 30);
+        
+        // Assert
+        Item updatedItem = mockRepository.getItem("ITEM001");
+        assertEquals(70, updatedItem.getQuantity());
+        
+        List<ShipmentHistory> histories = mockRepository.getHistories();
+        assertEquals(1, histories.size());
+        assertEquals("ITEM001", histories.get(0).getItemCode());
+        assertEquals(30, histories.get(0).getQuantity());
+    }
+    
+    @Test
+    public void 在庫不足の場合は例外が発生する() {
+        // Arrange
+        MockItemRepository mockRepository = new MockItemRepository();
+        mockRepository.addTestItem(new Item("ITEM001", "テスト商品", 10));
+        
+        RetrievalFlow retrievalFlow = new RetrievalFlow(mockRepository);
+        
+        // Act & Assert
+        assertThrows(InsufficientStockException.class, () -> {
+            retrievalFlow.execute("ITEM001", 20);
+        });
+    }
+    
+    @Test
+    public void 存在しない商品の場合は例外が発生する() {
+        // Arrange
+        MockItemRepository mockRepository = new MockItemRepository();
+        RetrievalFlow retrievalFlow = new RetrievalFlow(mockRepository);
+        
+        // Act & Assert
+        assertThrows(ItemNotFoundException.class, () -> {
+            retrievalFlow.execute("NONEXISTENT", 10);
+        });
+    }
+}
+----
+
+==== モックフレームワークの活用
+
+// 修正: `モックフレームワークZ` -> `モックフレームワーク`
+より洗練されたアプローチとして、Mockitoなどのモックフレームワークを使うこともできます：
+
+[source,java]
+----
+public class RetrievalFlowTestWithMockito {
+    @Mock
+    private IItemRepository mockRepository;
+    
+    @InjectMocks
+    private RetrievalFlow retrievalFlow;
+    
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+    
+    @Test
+    public void 正常な出庫処理のテスト_Mockito版() {
+        // Arrange
+        Item testItem = new Item("ITEM001", "テスト商品", 100);
+        when(mockRepository.getItem("ITEM001")).thenReturn(testItem);
+        
+        // Act
+        retrievalFlow.execute("ITEM001", 30);
+        
+        // Assert
+        verify(mockRepository).updateQuantity("ITEM001", 70);
+        verify(mockRepository).saveShipmentHistory(any(ShipmentHistory.class));
+    }
+}
+----
+
+このように、コンポーネントを疎結合に保つことで、それぞれを独立してテストすることが可能になり、品質の高いソフトウェアを効率的に開発できるのです。
+
+テストのメリット：
+* **高速**: データベース接続が不要なので、テストが瞬時に完了
+* **安定**: 外部システムの状態に依存しないので、テストが安定
+* **並列実行可能**: データベースの競合を気にせず、並列でテスト実行可能
+* **CI/CD対応**: 特別な環境構築なしに、どこでもテスト実行可能
+
+=== 依存性の注入（Dependency Injection）とは？
+
+テストコードの例で `new RetrievalFlow(new MockItemRepository())` と書いたように、クラスが必要とするオブジェクト（依存オブジェクト）を、そのクラスの内部で生成する (`new OracleItemRepository()`) のではなく、外部からコンストラクタなどを通じて渡す手法を**依存性の注入（Dependency Injection, DI）**と呼びます。
+
+DIは、依存性逆転の原則（DIP）を実現するための、非常にポピュラーで強力な実装パターンです。
+
+==== DIの種類
+
+DIには主に3つの方法があります：
+
+**1. コンストラクタインジェクション（推奨）**
+[source,java]
+----
+public class RetrievalFlow {
+    private final IItemRepository itemRepository;
+    
+    // コンストラクタで依存を受け取る
+    public RetrievalFlow(IItemRepository itemRepository) {
+        this.itemRepository = itemRepository;
+    }
+}
+----
+
+**2. セッターインジェクション**
+[source,java]
+----
+public class RetrievalFlow {
+    private IItemRepository itemRepository;
+    
+    // セッターで依存を設定
+    public void setItemRepository(IItemRepository itemRepository) {
+        this.itemRepository = itemRepository;
+    }
+}
+----
+
+**3. フィールドインジェクション（フレームワーク使用時）**
+[source,java]
+----
+public class RetrievalFlow {
+    @Inject  // またはフレームワークごとのアノテーション
+    private IItemRepository itemRepository;
+}
+----
+
+コンストラクタインジェクションが推奨される理由：
+* **不変性**: finalフィールドにできるため、実行中に変更されない
+* **必須性の明確化**: 必須の依存関係が明確
+* **テストしやすさ**: テスト時に簡単にモックを注入できる
+* **循環依存の検出**: コンパイル時に循環依存を検出できる
+
+==== 手動DIの例
+
+小規模なアプリケーションでは、手動で依存性を注入しても問題ありません：
+
+[source,java]
+----
+public class Application {
+    public static void main(String[] args) {
+        // 本番環境の構成
+        DataSource dataSource = createDataSource();
+        IItemRepository repository = new OracleItemRepository(dataSource);
+        RetrievalFlow retrievalFlow = new RetrievalFlow(repository);
+        
+        // アプリケーションの実行
+        retrievalFlow.execute("ITEM001", 10);
+    }
+    
+    private static DataSource createDataSource() {
+        // データソースの設定
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:oracle:thin:@localhost:1521:inventory");
+        config.setUsername("user");
+        config.setPassword("password");
+        return new HikariDataSource(config);
+    }
+}
+----
+
+==== DIコンテナ（IoCコンテナ）の活用
+
+しかし、アプリケーションが大規模化し、コンポーネントが増えるにつれて、これらの依存関係を手動で管理するのは非常に複雑で、間違いやすくなります。
+
+例えば、以下のような依存関係があるとします：
+
+[source,text]
+----
+Controller
+    → Application
+        → UseCase
+            → Service
+                → Repository
+                    → DataSource
+            → NotificationService
+                → EmailClient
+            → AuditService
+                → AuditRepository
+                    → DataSource
+----
+
+これを手動で組み立てると：
+
+[source,java]
+----
+// 手動DIの複雑さ
+DataSource dataSource = createDataSource();
+IItemRepository itemRepository = new OracleItemRepository(dataSource);
+IAuditRepository auditRepository = new OracleAuditRepository(dataSource);
+IEmailClient emailClient = new SmtpEmailClient(smtpConfig);
+INotificationService notificationService = new EmailNotificationService(emailClient);
+IAuditService auditService = new AuditService(auditRepository);
+IItemService itemService = new ItemService(itemRepository);
+RetrievalUseCase useCase = new RetrievalUseCase(itemService, notificationService, auditService);
+Application application = new Application(useCase);
+Controller controller = new Controller(application);
+----
+
+そこで、多くのモダンなフレームワークは、この依存性の注入を自動的に管理してくれる**DIコンテナ**（Inversion of Controlコンテナとも呼ばれる）という仕組みを提供しています。
+
+==== DIコンテナの仕組み
+
+開発者は、どのインターフェースにどの実装クラスを割り当てるかを設定ファイルやアノテーションで宣言するだけで、DIコンテナが必要なオブジェクトを適切なタイミングで自動的に生成し、注入してくれます。
+
+**Spring Frameworkの例**：
+
+[source,java]
+----
+@Configuration
+public class AppConfig {
+    @Bean
+    public DataSource dataSource() {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:oracle:thin:@localhost:1521:inventory");
+        return new HikariDataSource(config);
+    }
+    
+    @Bean
+    public IItemRepository itemRepository(DataSource dataSource) {
+        return new OracleItemRepository(dataSource);
+    }
+    
+    @Bean
+    public RetrievalFlow retrievalFlow(IItemRepository repository) {
+        return new RetrievalFlow(repository);
+    }
+}
+
+// 使用する側
+@RestController
+public class ItemController {
+    @Autowired
+    private RetrievalFlow retrievalFlow;  // 自動的に注入される
+    
+    @PostMapping("/items/ship")
+    public ResponseEntity<Void> ship(@RequestBody ShipmentRequest request) {
+        retrievalFlow.execute(request.getItemCode(), request.getQuantity());
+        return ResponseEntity.ok().build();
+    }
+}
+----
+
+**代表的なDIコンテナを持つフレームワーク**：
+
+* **Java**: Spring Framework、Google Guice、CDI (Jakarta EE)、Dagger
+* **.NET**: ASP.NET Core（組み込み）、Unity、Autofac、Ninject
+* **PHP**: Laravel（Service Container）、Symfony（DependencyInjection Component）
+* **Python**: dependency-injector、injector
+* **JavaScript/TypeScript**: InversifyJS、NestJS（組み込み）、Angular（組み込み）
+
+これにより、開発者はビジネスロジックの実装に集中でき、オブジェクトの生成と配線という煩雑な作業から解放されます。
+
+== ポート/アダプタの比喩（コンセントの例え）
+
+依存性逆転の原則を理解する上で、非常に分かりやすい比喩が「コンセント」です。この比喩は、ヘキサゴナルアーキテクチャ（Ports and Adapters）の文脈でよく使われます。
+
+=== 現実世界のコンセント
+
+私たちが日常的に使う電化製品とコンセントの関係を考えてみましょう：
+
+[source,text]
+----
+【機器側（ドメイン）】
+ドライヤー、掃除機、パソコンなどの電化製品
+↓
+【ポート（契約）】
+プラグの形状と電圧・周波数の仕様（100V 50/60Hz、2ピンなど）
+↓
+【アダプター（変換）】
+変換プラグ、変圧器
+↓
+【外界（インフラ）】
+壁のコンセント、各国の電源規格
+----
+
+==== ポート＝コンセントの受け口（契約）
+
+電化製品には、電源を取るための「プラグ」があります。このプラグの形状と、必要な電圧・周波数が「契約」です：
+
+* 日本：100V、50/60Hz、Aタイプ（2ピン）
+* アメリカ：120V、60Hz、Aタイプ（2ピン）
+* ヨーロッパ：230V、50Hz、Cタイプ（丸ピン）
+* イギリス：230V、50Hz、Gタイプ（3ピン）
+
+重要なのは、**電化製品側が「私はこういう電源が必要です」という契約を定義している**ことです。
+
+==== アダプター＝変換プラグ
+
+海外旅行に行く際、私たちは変換プラグを持っていきます。これがまさに「アダプター」です：
+
+* 日本の電化製品（Aタイプ）→ 変換プラグ → ヨーロッパのコンセント（Cタイプ）
+* 電圧が異なる場合は変圧器も必要
+
+アダプターは、機器側の要求（ポート）と、実際の環境（外界）の違いを吸収します。
+
+==== 機器（ドメイン）は変わらない
+
+最も重要な点は、**どの国に行っても電化製品自体は変更しない**ということです：
+
+* ドライヤーの内部構造を変更する必要はない
+* 掃除機のモーターを交換する必要はない
+* パソコンの回路を改造する必要はない
+
+変えるのは変換プラグ（アダプター）だけです。
+
+=== ソフトウェアにおけるPort/Adapter
+
+この比喩をソフトウェアに適用すると：
+
+[source,text]
+----
+【ドメイン（ビジネスロジック）】＝【電化製品】
+出庫処理、在庫管理、価格計算などのビジネスロジック
+
+【ポート（インターフェース）】＝【プラグの仕様】
+IItemRepository、INotificationService などの契約
+
+【アダプター（実装）】＝【変換プラグ】
+OracleItemRepository、EmailNotificationService などの具体的実装
+
+【外界（技術的詳細）】＝【各国のコンセント】
+Oracle DB、PostgreSQL、REST API、SMTP サーバーなど
+----
+
+具体的なコード例で見てみましょう：
+
+[source,java]
+----
+// ========== ドメイン層（電化製品）==========
+
+// ポート定義（プラグの仕様）
+public interface IItemRepository {
+    Item findById(String id);
+    void save(Item item);
+}
+
+// ビジネスロジック（電化製品本体）
+public class InventoryService {
+    private final IItemRepository repository;  // プラグ
+    
+    public InventoryService(IItemRepository repository) {
+        this.repository = repository;
+    }
+    
+    public void processShipment(String itemId, int quantity) {
+        // ビジネスロジック（電化製品の機能）
+        Item item = repository.findById(itemId);
+        item.ship(quantity);
+        repository.save(item);
+    }
+}
+
+// ========== アダプター層（変換プラグ）==========
+
+// Oracle用アダプター（日本→ヨーロッパ変換プラグ）
+public class OracleItemRepository implements IItemRepository {
+    private final DataSource oracleDataSource;
+    
+    @Override
+    public Item findById(String id) {
+        // Oracle特有のSQL方言を使った実装
+        String sql = "SELECT * FROM ITEMS WHERE ID = ? FOR UPDATE";  // Oracle方言
+        // ...
+    }
+    
+    @Override
+    public void save(Item item) {
+        // Oracle特有の保存処理
+        String sql = "MERGE INTO ITEMS USING dual ON (ID = ?) ...";  // Oracle MERGE文
+        // ...
+    }
+}
+
+// PostgreSQL用アダプター（日本→アメリカ変換プラグ）
+public class PostgreSQLItemRepository implements IItemRepository {
+    private final DataSource postgresDataSource;
+    
+    @Override
+    public Item findById(String id) {
+        // PostgreSQL特有のSQL方言を使った実装
+        String sql = "SELECT * FROM items WHERE id = $1 FOR UPDATE";  // PostgreSQL方言
+        // ...
+    }
+    
+    @Override
+    public void save(Item item) {
+        // PostgreSQL特有の保存処理
+        String sql = "INSERT INTO items ... ON CONFLICT (id) DO UPDATE ...";  // PostgreSQL UPSERT
+        // ...
+    }
+}
+
+// MongoDB用アダプター（まったく異なる規格への変換）
+public class MongoItemRepository implements IItemRepository {
+    private final MongoCollection<Document> collection;
+    
+    @Override
+    public Item findById(String id) {
+        // NoSQLの実装
+        Document doc = collection.find(eq("_id", id)).first();
+        return documentToItem(doc);
+    }
+    
+    @Override
+    public void save(Item item) {
+        // NoSQLの保存
+        Document doc = itemToDocument(item);
+        collection.replaceOne(eq("_id", item.getId()), doc, new ReplaceOptions().upsert(true));
+    }
+}
+----
+
+=== 利点の整理
+
+この設計がもたらす利点を、コンセントの比喩で整理すると：
+
+**1. 移植性（Portability）**
+- 電化製品を世界中で使えるように、ビジネスロジックを様々な環境で動かせる
+- 変換プラグを変えるだけで対応可能
+
+**2. テスト容易性**
+- 電化製品のテストに本物の電源は不要（バッテリーや模擬電源でOK）
+- ビジネスロジックのテストにデータベースは不要（モックでOK）
+
+**3. 技術の進化への対応**
+- 新しい電源規格が登場しても、変換プラグを作れば対応可能
+- 新しいデータベース技術が登場しても、アダプターを作れば対応可能
+
+**4. 並行開発**
+- 電化製品の開発と、各国向け変換プラグの開発を並行して進められる
+- ビジネスロジックの開発と、各種技術基盤の開発を並行して進められる
+
+**5. 明確な責任分離**
+- 電化製品メーカーは製品の機能に集中
+- 変換プラグメーカーは変換技術に集中
+- ドメインチームはビジネスロジックに集中
+- インフラチームは技術的実装に集中
+
+'''
+
+// 修正: このセクションの整合性を高めるための修正・追記
+== パッケージ構成例と参照ルール
+
+実際のプロジェクトでこれらの原則を適用する際の、具体的なパッケージ構成を示します。
+
+// 修正: AsciiDocのリテラルブロック(`....`)を使用し、コメントを明確化
+.パッケージ構成例
+....
+src/
+├── domain/  # ビジネスの核心。特定のフレームワークや技術に依存しない
+│   ├── entities/
+│   │     // コアとなるビジネスモデル（エンティティ、値オブジェクト）。例：Order, Money
+│   │     // 【被参照】: domain内の全パッケージ、application、adapters (DTOとの変換時)
+│   │
+│   ├── services/
+│   │     // 複数のエンティティにまたがるドメインロジック（状態を持たない）。例：PricingService
+│   │     // 【参照】: domain/entities, domain/ports/*
+│   │     // 【被参照】: domain/usecases
+│   │
+│   ├── usecases/
+│   │     // ユースケース（DDDのアプリケーションサービスに相当）。業務フローを実装。例：PlaceOrderUseCase
+│   │     // 【参照】: domain/entities, domain/services, domain/ports/*
+│   │     // 【被参照】: application
+│   │
+│   └── ports/
+│         // 外部との契約（インターフェース）。依存性逆転の原則の要
+│         ├── presenters/
+│         │     // 出力ポート。ユースケースの結果を表現するための契約。例：IOrderPresenter
+│         │     // 【被参照】: domain/usecases (利用側), adapters/presenters (実装側)
+│         │
+│         ├── repositories/
+│         │     // データ永続化ポート。例：IOrderRepository
+│         │     // 【被参照】: domain/services, domain/usecases (利用側), adapters/repositories (実装側)
+│         │
+│         └── external/
+│               // その他外部サービス用ポート。例: INotificationService
+│               // 【被参照】: domain/services, domain/usecases (利用側), adapters/external (実装側)
+│
+├── application/
+│     // ユースケースの実行調整、DIコンテナの設定、トランザクション境界の定義など
+│     // 【参照】: domain/usecases (呼び出し), domain/ports/* (Usecase等への依存性注入のため)
+│     // 【被参照】: adapters/controllers
+│
+└── adapters/  # 外部世界との接続部（実装の詳細）
+      ├── controllers/
+      │     // 入力アダプター。外部リクエストを受け付け、application層に処理を委譲。例：OrderController
+      │     // 【参照】: application, domain/entities (Enum等のDTO的な参照は許容)
+      │     // 【被参照】: (外部クライアント)
+      │
+      ├── presenters/
+      │     // 出力アダプター。出力ポートを実装。例：JsonOrderPresenter
+      │     // 【参照】: domain/ports/presenters (実装するインターフェース)
+      │     // 【被参照】: アプリケーションのエントリーポイントやDIコンテナ (依存性注入のため)
+      │
+      ├── repositories/
+      │     // データ永続化アダプター。リポジトリポートを実装。例：PostgresOrderRepository
+      │     // 【参照】: domain/ports/repositories (実装するインターフェース)
+      │     // 【被参照】: アプリケーションのエントリーポイントやDIコンテナ (依存性注入のため)
+      │
+      └── external/
+            // 外部サービスアダプター。外部ポートを実装。例: SmtpNotificationService
+            // 【参照】: domain/ports/external (実装するインターフェース)
+            // 【被参照】: アプリケーションのエントリーポイントやDIコンテナ (依存性注入のため)
+....
+
+=== 依存関係の詳細ルール
+
+各パッケージが何を参照してよいか、何を参照してはいけないかを明確にすることで、依存関係の管理が容易になります。
+
+==== domain/entities（エンティティ・Value Object）
+
+**役割**: ビジネスの核となるモデル。不変条件と振る舞いを持つ。
+
+**【参照可能】**:
+- Java標準ライブラリ（副作用のないもの：String、List、LocalDateTime等）
+- 同じdomain/entities内の他のエンティティやValue Object
+- 純粋なユーティリティライブラリ（Apache Commons、Guava等の副作用のない部分）
+
+**【被参照】**（これらから参照される）:
+- domain/services
+- domain/usecases
+- domain/ports（型として使用）
+- application
+- adapters（DTOへの変換時など）
+
+**【参照禁止】**:
+- application/*（アプリケーション層のクラス）
+- adapters/*（アダプター層のクラス）
+- 外部フレームワーク（Spring、Hibernate等）
+- I/Oを伴うライブラリ
+- データベースドライバー
+- HTTPクライアント
+
+[source,java]
+----
+// 良い例
+public class Item {
+    private final String id;
+    private final String name;
+    private final Quantity quantity;  // 同じdomain/entitiesのVO
+    private final Money price;         // 同じdomain/entitiesのVO
+    
+    public void ship(Quantity shippingQuantity) {
+        if (this.quantity.isLessThan(shippingQuantity)) {  // ビジネスルール
+            throw new InsufficientStockException();
+        }
+        this.quantity = this.quantity.subtract(shippingQuantity);
+    }
+}
+
+// 悪い例
+public class Item {
+    @Id @GeneratedValue  // ← JPA（外部FW）のアノテーション：NG
+    private Long id;
+    
+    @Autowired  // ← Spring（外部FW）の依存注入：NG
+    private ItemRepository repository;
+    
+    public void save() {
+        repository.save(this);  // ← I/O操作を直接実行：NG
+    }
+}
+----
+
+==== domain/services（ドメインサービス）
+
+**役割**: 複数のエンティティに跨るビジネスロジック、単一エンティティに収まらないドメインロジック。
+
+**【参照可能】**:
+- domain/entities
+- domain/ports/repositories（データアクセスの契約）
+- domain/ports/external（外部サービスの契約）
+
+**【被参照】**:
+- domain/usecases
+
+**【参照禁止】**:
+- domain/ports/presenters（出力形式は知らない）
+- application/*
+- adapters/*
+
+[source,java]
+----
+// 良い例
+public class PricingService {
+    private final IItemRepository itemRepository;  // ポート（契約）に依存
+    private final ITaxCalculator taxCalculator;    // ポート（契約）に依存
+    
+    public Money calculateTotalPrice(List<OrderLine> orderLines) {
+        Money subtotal = Money.ZERO;
+        for (OrderLine line : orderLines) {
+            Item item = itemRepository.findById(line.getItemId());
+            subtotal = subtotal.add(item.getPrice().multiply(line.getQuantity()));
+        }
+        return taxCalculator.addTax(subtotal);
+    }
+}
+
+// 悪い例
+public class PricingService {
+    @Autowired
+    private JdbcTemplate jdbcTemplate;  // ← 具体的な技術（Spring JDBC）に依存：NG
+    
+    public Money calculateTotalPrice(List<OrderLine> orderLines) {
+        // SQLを直接書いている：NG
+        String sql = "SELECT price FROM items WHERE id = ?";
+        // ...
+    }
+}
+----
+
+==== domain/usecases（ユースケース）
+
+**役割**: アプリケーション固有の業務フロー。入力を受け取り、ドメインを調整し、結果を出力ポートへ渡す。
+
+**【参照可能】**:
+- domain/entities
+- domain/services
+- domain/ports/repositories
+- domain/ports/presenters（出力ポート）
+- domain/ports/external
+
+**【被参照】**:
+- application
+
+**【参照禁止】**:
+- adapters/*（直接参照しない）
+
+[source,java]
+----
+// 良い例
+public class ShipmentUseCase {
+    private final InventoryService inventoryService;
+    private final IItemRepository itemRepository;
+    private final INotificationService notificationService;
+    
+    public void execute(ShipmentRequest request, IShipmentPresenter presenter) {
+        try {
+            // ビジネスロジックの調整
+            Item item = itemRepository.findById(request.getItemId());
+            inventoryService.processShipment(item, request.getQuantity());
+            itemRepository.save(item);
+            
+            // 通知
+            notificationService.notifyShipment(item, request.getQuantity());
+            
+            // 結果を出力ポートへ
+            presenter.presentSuccess(new ShipmentResult(item, request.getQuantity()));
+        } catch (InsufficientStockException e) {
+            presenter.presentError("在庫不足です: " + e.getMessage());
+        }
+    }
+}
+----
+
+==== domain/ports/*（ポート定義）
+
+**役割**: ドメインが外界に求める契約（インターフェース）の定義。
+
+**【参照可能】**:
+- domain/entities（引数や戻り値の型として）
+- 標準的な型（String、List等）
+
+**【被参照】**:
+- domain/services（利用側）
+- domain/usecases（利用側）
+- adapters/*（実装側）
+
+**【参照禁止】**:
+- application/*
+- adapters/*の具象クラス
+
+[source,java]
+----
+// 良い例
+public interface IItemRepository {
+    Optional<Item> findById(String id);  // エンティティを返す
+    List<Item> findByStatus(ItemStatus status);  // エンティティとEnumを使用
+    void save(Item item);
+}
+
+// 悪い例
+public interface IItemRepository {
+    ResultSet executeQuery(String sql);  // ← JDBC（技術詳細）の型を露出：NG
+    JpaEntity findById(Long id);        // ← JPA（外部FW）の型を露出：NG
+}
+----
+
+==== application（アプリケーション層）
+
+**役割**: ユースケースの組み立て、依存性の解決、トランザクション境界の管理。
+
+**【参照可能】**:
+- domain/usecases
+- domain/ports/*（DIのために参照）
+
+**【被参照】**:
+- adapters/controllers
+
+**【参照禁止】**:
+- adapters/presenters、adapters/repositoriesの具象クラス（DI設定部分を除く）
+
+[source,java]
+----
+// 良い例
+@Component
+public class ApplicationService {
+    private final ShipmentUseCase shipmentUseCase;
+    
+    @Transactional  // トランザクション境界
+    public void processShipment(ShipmentRequest request, IShipmentPresenter presenter) {
+        shipmentUseCase.execute(request, presenter);
+    }
+}
+----
+
+==== adapters/controllers（入力アダプター）
+
+**役割**: 外部からのリクエストを受け付け、applicationやusecaseに処理を委譲。
+
+**【参照可能】**:
+- application
+- domain/ports/presenters（DIのため）
+- domain/entities（Enum等の定数、DTOへの変換時）
+// 追記: ただし、この参照はDTO（Data Transfer Object）を介することが望ましい。Controllerがドメインエンティティを直接構築・操作し始めると、責務が曖昧になるため注意が必要。
+
+**【被参照】**:
+- 外部クライアント（ブラウザ、APIクライアント等）
+
+**【参照禁止】**:
+- domain/services（直接呼ばない）
+- domain/usecases（applicationを介さずに直接呼ばない）
+
+[source,java]
+----
+// 良い例
+@RestController
+public class ItemController {
+    private final ApplicationService applicationService;
+    private final JsonShipmentPresenter presenter;
+    
+    @PostMapping("/items/ship")
+    public ResponseEntity<ShipmentResponse> ship(@RequestBody ShipmentRequestDTO request) {
+        applicationService.processShipment(request, presenter);
+        return ResponseEntity.ok(presenter.getResponse());
+    }
+}
+
+// 悪い例
+@RestController
+public class ItemController {
+    @Autowired
+    private ShipmentUseCase useCase;  // ← Usecaseを直接参照：NG（applicationを介すべき）
+    
+    @Autowired
+    private OracleItemRepository repository;  // ← 具象実装を直接参照：NG
+}
+----
+
+==== adapters/presenters（出力アダプター）
+
+**役割**: ドメインからの出力を、特定の形式（JSON、HTML、CSV等）に変換。
+
+**【参照可能】**:
+- domain/ports/presenters（実装するインターフェース）
+- domain/entities（変換対象として）
+
+**【被参照】**:
+- adapters/controllers（DIされる）
+
+**【参照禁止】**:
+- domain/services
+- domain/usecases
+
+==== adapters/repositories（データアクセスアダプター）
+
+**役割**: データの永続化と取得の具体的な実装。
+
+**【参照可能】**:
+- domain/ports/repositories（実装するインターフェース）
+- domain/entities（マッピング対象）
+- データベースドライバー、ORM等
+
+**【被参照】**:
+- application（DIのため） // 修正: application → アプリケーションのエントリーポイントやDIコンテナ
+
+**【参照禁止】**:
+- domain/usecases
+- domain/services（ポート経由以外）
+
+[source,java]
+----
+// 良い例
+@Repository
+public class JpaItemRepository implements IItemRepository {
+    @PersistenceContext
+    private EntityManager entityManager;
+    
+    @Override
+    public Optional<Item> findById(String id) {
+        ItemEntity entity = entityManager.find(ItemEntity.class, id);
+        return Optional.ofNullable(entity).map(this::toDomainModel);
+    }
+    
+    private Item toDomainModel(ItemEntity entity) {
+        // JPAエンティティからドメインモデルへの変換
+        return new Item(entity.getId(), entity.getName(), 
+                       new Quantity(entity.getQuantity()));
+    }
+}
+----
+
+=== 依存関係の検証ツール
+
+これらのルールを手動で守るのは困難なので、自動検証ツールの使用を推奨します：
+
+**Java - ArchUnit**:
+[source,java]
+----
+@Test
+public void ドメイン層はアダプター層に依存してはいけない() {
+    JavaClasses classes = new ClassFileImporter().importPackages("com.example");
+    
+    ArchRule rule = noClasses()
+        .that().resideInAPackage("..domain..")
+        .should().dependOnClassesThat()
+        .resideInAPackage("..adapters..");
+    
+    rule.check(classes);
+}
+----
+
+**Python - import-linter**:
+[source,ini]
+----
+# .importlinter
+[importlinter]
+root_package = myapp
+
+[importlinter:contract:1]
+name = Domain should not depend on adapters
+type = forbidden
+source_modules = myapp.domain
+forbidden_modules = myapp.adapters
+----
+
+**TypeScript - dependency-cruiser**:
+[source,json]
+----
+{
+  "forbidden": [{
+    "name": "domain-not-depend-on-adapters",
+    "from": {"path": "src/domain"},
+    "to": {"path": "src/adapters"}
+  }]
+}
+----
+
+'''
+
+== UML図による可視化
+依存関係と処理フローを示すUML図です。
+
+[[dependency-diagram]]
+=== 依存関係図
+
+// 修正: タイトルをより具体的に
+[plantuml, 依存関係図（パッケージ構成）, png]
+// 修正: 整合性を高めるため、ControllerからEntityへの直接参照を削除し、コメントを整理
+....
+@startuml
+skinparam packageStyle rect
+skinparam defaultFontName "Meiryo UI"
+skinparam shadowing false
+left to right direction
+
+package "adapters (インフラ層)" as Adapters #LightGray {
+  package "controllers (入力仲介)" as AdaptersControllers
+  package "presenters (UI実装)" as AdaptersPresenters
+  package "repositories (データアクセス実装)" as AdaptersRepositories
+  package "other_adapters (その他IF実装)" as AdaptersOther
+  AdaptersControllers -[hidden]down-> AdaptersPresenters
+  AdaptersPresenters -[hidden]down-> AdaptersRepositories
+  AdaptersRepositories -[hidden]down-> AdaptersOther
+}
+
+package "application (アプリケーション層)" as Application #LightBlue {
+  package "app" as AppPackage
+}
+
+package "domain (ドメイン層)" as Domain #White {
+  package "entities (エンティティ)" as DomainEntities
+  package "services (ドメインサービス)" as DomainServices
+  package "usecases (ユースケース)" as DomainUseCases
+  package "ports (ポート)" as DomainPorts {
+    package "presenters (出力ポートIF)" as DomainPresentersPort
+    package "repositories (リポジトリIF)" as DomainRepositoryPort
+    package "other_ports (その他ポートIF)" as DomainOtherPorts
+    DomainPresentersPort -[hidden]down-> DomainRepositoryPort
+    DomainRepositoryPort -[hidden]down-> DomainOtherPorts
+  }
+}
+
+' << 依存の流れ: 外側から内側へ >>
+AdaptersControllers --> AppPackage : "リクエスト委譲"
+AppPackage --> DomainUseCases : "ユースケース呼び出し"
+
+' ドメイン内部の依存
+DomainUseCases --> DomainEntities : "エンティティ利用"
+DomainUseCases --> DomainServices : "サービス利用"
+DomainServices --> DomainEntities : "エンティティ利用"
+
+' << 依存性逆転の原則(DIP) >>
+' ドメインは抽象(ポート)に依存
+DomainUseCases --> DomainRepositoryPort : "リポジトリIF参照"
+DomainServices --> DomainRepositoryPort : "リポジトリIF参照"
+DomainUseCases ..> DomainPresentersPort : "出力ポートIF参照"
+DomainUseCases ..> DomainOtherPorts : "その他ポートIF参照"
+DomainServices ..> DomainOtherPorts : "その他ポートIF参照"
+
+' アダプターはドメインが定義したポートを実装 (依存の方向が逆転)
+AdaptersPresenters ..|> DomainPresentersPort : "出力ポートIF実装"
+AdaptersRepositories ..|> DomainRepositoryPort : "リポジトリIF実装"
+AdaptersOther ..|> DomainOtherPorts : "その他ポートIF実装"
+
+' DIやIF受け渡しのための参照
+AppPackage ..> DomainRepositoryPort : "DIのためのIF参照"
+AppPackage ..> DomainPresentersPort : "DIのためのIF参照"
+AppPackage ..> DomainOtherPorts : "DIのためのIF参照"
+AdaptersControllers ..> DomainPresentersPort : "出力ポートIFをUsecaseに渡す"
+
+hide empty members
+@enduml
+....
+
+// 修正: タイトルを明確化
+=== シーケンス図（チャットボット処理）
+
+[plantuml, シーケンス図 - チャットボット処理の流れ, png]
+....
+@startuml
+actor Client as "クライアント"
+participant "Chatbot\nController\n(Adapters)" as Controller
+participant "Console\nPresenter\n(Adapters)" as Presenter
+participant "Application\n(App)" as Application
+participant "Chatbot\nUsecase\n(Domain)" as Usecase
+participant "Chatbot\nService\n(Domain)" as Service
+participant "Chat\nRepository\n(Adapters)" as Repository
+database "Database" as DB
+
+Client -> Controller : メッセージ送信\n"こんにちは"
+activate Controller
+
+Controller -> Application : handle_user_message(\n  content="こんにちは",\n  presenter=ConsolePresenter)
+activate Application
+
+Application -> Application : トランザクション開始
+
+Application -> Usecase : handle_message(\n  content="こんにちは",\n  role=USER,\n  presenter)
+activate Usecase
+
+Usecase -> Service : process_message(\n  ChatMessage("こんにちは", USER))
+activate Service
+
+Service -> Repository : save_message(message)
+activate Repository
+
+Repository -> DB : INSERT INTO chat_messages\nVALUES (...)
+DB --> Repository : OK
+
+Repository --> Service : 保存完了
+deactivate Repository
+
+Service -> Service : AI応答生成\n（実際はLLM API呼び出し）
+
+Service --> Usecase : "こんにちは！\n何かお手伝いできることは\nありますか？"
+deactivate Service
+
+Usecase -> Presenter : present_message(\n  "こんにちは！...",\n  role=ASSISTANT)
+activate Presenter
+
+Presenter -> Presenter : コンソール形式に\nフォーマット
+
+Presenter --> Client : Bot: こんにちは！\n何かお手伝いできることは\nありますか？
+deactivate Presenter
+
+Usecase --> Application : 処理完了
+deactivate Usecase
+
+Application -> Application : トランザクションコミット
+
+Application --> Controller : 正常終了
+deactivate Application
+
+Controller --> Client : 応答完了
+deactivate Controller
+
+@enduml
+....
+
+=== シーケンス図（WMS出庫処理 with 楽観ロック）
+
+[plantuml, シーケンス図-WMS出庫処理の流れ, png]
+....
+@startuml
+actor Client as "クライアント"
+participant "WMS\nController\n(Adapters)" as Controller
+participant "WMS\nPresenter\n(Adapters)" as Presenter
+participant "WMS\nApplication\n(App)" as Application
+participant "Outbound\nUsecase\n(Domain)" as Usecase
+participant "Warehouse\nService\n(Domain)" as Service
+participant "Warehouse\nRepository\n(Adapters)" as Repository
+database "Database" as DB
+
+Client -> Controller : 出庫要求\n(item_id=A001, qty=10)
+activate Controller
+
+Controller -> Application : process_outbound(\n  item_id="A001",\n  qty=10,\n  presenter)
+activate Application
+
+Application -> Application : トランザクション開始
+
+Application -> Usecase : handle_outbound_request(\n  item_id="A001",\n  qty=10,\n  presenter)
+activate Usecase
+
+Usecase -> Usecase : 入力検証\n(qty > 0?)
+
+Usecase -> Service : process_outbound(\n  item_id="A001",\n  qty=10)
+activate Service
+
+Service -> Repository : get_item("A001")
+activate Repository
+
+Repository -> DB : SELECT * FROM items\nWHERE id = 'A001'\nFOR UPDATE
+DB --> Repository : Item(id=A001,\nname="商品A",\nquantity=50,\nversion=3)
+
+Repository --> Service : WarehouseItem(\n  quantity=50,\n  version=3)
+deactivate Repository
+
+Service -> Service : item.ship(10)\n在庫確認: 50 >= 10 ✓\n在庫減算: 50 - 10 = 40
+
+Service -> Repository : update_item(\n  item(qty=40),\n  expected_version=3)
+activate Repository
+
+Repository -> DB : UPDATE items\nSET quantity = 40,\n    version = 4\nWHERE id = 'A001'\n  AND version = 3
+
+alt 楽観ロック成功
+  DB --> Repository : 1 row updated
+  Repository --> Service : 更新成功
+  
+  Service --> Usecase : "出庫完了:\n商品A 10個出庫\n残在庫: 40"
+  
+  Usecase -> Presenter : present_outbound_result(\n  "出庫完了...")
+  activate Presenter
+  Presenter --> Client : WMS OK: 出庫完了\n商品A 10個出庫\n残在庫: 40
+  deactivate Presenter
+
+else 楽観ロック失敗（競合）
+  DB --> Repository : 0 rows updated
+  Repository --> Service : ConcurrencyConflict
+  deactivate Repository
+  
+  Service --> Usecase : throw ConcurrencyConflict
+  deactivate Service
+  
+  Usecase -> Presenter : present_error(\n  "競合エラー:\n  他の処理と競合しました")
+  activate Presenter
+  Presenter --> Client : WMS ERR: 競合エラー\n再試行してください
+  deactivate Presenter
+  
+  Application -> Application : トランザクション\nロールバック
+end
+
+Usecase --> Application : 処理終了
+deactivate Usecase
+
+Application -> Application : トランザクション\nコミット（成功時）
+
+Application --> Controller : 処理完了
+deactivate Application
+
+Controller --> Client : レスポンス返却
+deactivate Controller
+
+@enduml
+....
+
+=== アウトボックスパターン（結果整合性）
+
+複数のアグリゲートや外部システムとの連携が必要な場合の、イベント駆動による結果整合性の実現：
+
+[plantuml, アウトボックスパターン, png]
+....
+@startuml
+actor User
+participant "Shipment\nUsecase" as Usecase
+participant "Domain\nService" as Domain
+database "Main DB" as MainDB
+database "Outbox\nTable" as Outbox
+participant "Event\nPublisher" as Publisher
+queue "Message\nBroker" as Broker
+participant "Inventory\nService" as Inventory
+participant "Notification\nService" as Notification
+
+User -> Usecase : 出庫処理
+
+activate Usecase
+Usecase -> Domain : 在庫減算
+activate Domain
+
+group 同一トランザクション
+  Domain -> MainDB : UPDATE items\nSET quantity = quantity - 10
+  MainDB --> Domain : OK
+  
+  Domain -> Outbox : INSERT INTO outbox\nVALUES (\n  event_type='ItemShipped',\n  payload='{...}',\n  status='PENDING'\n)
+  Outbox --> Domain : OK
+end
+
+Domain --> Usecase : 処理完了
+deactivate Domain
+
+Usecase --> User : 出庫受付完了
+deactivate Usecase
+
+... 非同期処理（別プロセス） ...
+
+loop 定期的なポーリング
+  Publisher -> Outbox : SELECT * FROM outbox\nWHERE status = 'PENDING'
+  Outbox --> Publisher : イベントリスト
+  
+  Publisher -> Broker : Publish(ItemShippedEvent)
+  Broker --> Publisher : ACK
+  
+  Publisher -> Outbox : UPDATE outbox\nSET status = 'PUBLISHED'
+  Outbox --> Publisher : OK
+end
+
+Broker -> Inventory : ItemShippedEvent
+activate Inventory
+Inventory -> Inventory : 在庫履歴記録
+Inventory --> Broker : ACK
+deactivate Inventory
+
+Broker -> Notification : ItemShippedEvent
+activate Notification
+Notification -> Notification : メール送信
+Notification --> Broker : ACK
+deactivate Notification
+
+note over MainDB, Outbox : 同一トランザクションで\n更新とイベント登録を保証
+
+note over Broker : イベントの配信は\n非同期で結果整合性
+
+@enduml
+....
+
+'''
+
+== 実装例（Python、統一方式）
+
+実際のコードで、これまで説明した原則をどのように実装するか見ていきましょう。以下の方針で統一します：
+
+- Usecaseの出力はOutput Port（Presenter）方式
+- ドメインに外部ライブラリ型は入れない
+- 例外設計は層ごとに分離
+
+=== 例1：チャットボットシステム
+
+チャットボットシステムを例に、各層の実装を見ていきます。
+
+==== ドメイン層（エンティティ）
+
+[source,python]
+----
+# src/domain/entities/messages.py
+from dataclasses import dataclass
+from enum import Enum
+from datetime import datetime
+from typing import Optional
+
+class MessageRole(Enum):
+    """メッセージの送信者の役割"""
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+@dataclass(frozen=True)
+class ChatMessage:
+    """
+    チャットメッセージを表すValue Object
+    不変（frozen=True）として定義
+    """
+    content: str
+    role: MessageRole
+    timestamp: datetime
+    message_id: Optional[str] = None
+    
+    def __post_init__(self):
+        """バリデーション"""
+        if not self.content or not self.content.strip():
+            raise ValueError("Message content cannot be empty")
+        if len(self.content) > 10000:
+            raise ValueError("Message content too long (max 10000 characters)")
+
+@dataclass
+class ChatSession:
+    """
+    チャットセッションを表すエンティティ
+    識別子（session_id）を持ち、状態が変化する
+    """
+    session_id: str
+    user_id: str
+    messages: list[ChatMessage]
+    created_at: datetime
+    last_activity: datetime
+    is_active: bool = True
+    
+    def add_message(self, message: ChatMessage) -> None:
+        """
+        メッセージを追加（ビジネスロジック）
+        """
+        if not self.is_active:
+            raise ValueError("Cannot add message to inactive session")
+        
+        self.messages.append(message)
+        self.last_activity = datetime.now()
+    
+    def close(self) -> None:
+        """セッションを終了"""
+        self.is_active = False
+    
+    def get_context(self, max_messages: int = 10) -> list[ChatMessage]:
+        """
+        直近のメッセージを取得（コンテキスト用）
+        """
+        return self.messages[-max_messages:] if self.messages else []
+----
+
+==== ドメイン層（例外）
+
+[source,python]
+----
+# src/domain/exceptions.py
+class DomainError(Exception):
+    """ドメイン層の基底例外"""
+    pass
+
+class SessionNotFoundError(DomainError):
+    """セッションが見つからない"""
+    pass
+
+class SessionInactiveError(DomainError):
+    """非アクティブなセッションへの操作"""
+    pass
+
+class MessageValidationError(DomainError):
+    """メッセージのバリデーションエラー"""
+    pass
+----
+
+==== ドメイン層（ポート定義）
+
+[source,python]
+----
+# src/domain/ports/repositories/chat_repository.py
+from abc import ABC, abstractmethod
+from typing import Optional, List
+from domain.entities.messages import ChatSession, ChatMessage
+
+class IChatRepository(ABC):
+    """チャットデータの永続化に関する契約"""
+    
+    @abstractmethod
+    async def find_session_by_id(self, session_id: str) -> Optional[ChatSession]:
+        """セッションIDでセッションを取得"""
+        pass
+    
+    @abstractmethod
+    async def save_session(self, session: ChatSession) -> None:
+        """セッションを保存"""
+        pass
+    
+    @abstractmethod
+    async def find_active_sessions_by_user(self, user_id: str) -> List[ChatSession]:
+        """ユーザーのアクティブなセッション一覧を取得"""
+        pass
+
+# src/domain/ports/presenters/chat_presenter.py
+from abc import ABC, abstractmethod
+from domain.entities.messages import MessageRole, ChatMessage
+
+class IChatPresenter(ABC):
+    """チャット出力の表示に関する契約"""
+    
+    @abstractmethod
+    def present_message(self, text: str, role: MessageRole) -> None:
+        """メッセージを表示"""
+        pass
+    
+    @abstractmethod
+    def present_error(self, error_message: str) -> None:
+        """エラーを表示"""
+        pass
+    
+    @abstractmethod
+    def present_session_info(self, session_id: str, message_count: int) -> None:
+        """セッション情報を表示"""
+        pass
+
+# src/domain/ports/external/llm_service.py
+from abc import ABC, abstractmethod
+from typing import List
+from domain.entities.messages import ChatMessage
+
+class ILLMService(ABC):
+    """大規模言語モデル（LLM）との連携に関する契約"""
+    
+    @abstractmethod
+    async def generate_response(self, messages: List[ChatMessage]) -> str:
+        """メッセージ履歴から応答を生成"""
+        pass
+----
+
+==== ドメイン層（サービス）
+
+[source,python]
+----
+# src/domain/services/chatbot_service.py
+from domain.ports.repositories.chat_repository import IChatRepository
+from domain.ports.external.llm_service import ILLMService
+from domain.entities.messages import ChatMessage, MessageRole, ChatSession
+from domain.exceptions import SessionNotFoundError
+from datetime import datetime
+import uuid
+
+class ChatbotService:
+    """
+    チャットボットのコアロジックを提供するドメインサービス
+    複数のエンティティやポートを調整する
+    """
+    
+    def __init__(
+        self,
+        repository: IChatRepository,
+        llm_service: ILLMService
+    ):
+        self.repository = repository
+        self.llm_service = llm_service
+    
+    async def create_session(self, user_id: str) -> ChatSession:
+        """新しいチャットセッションを作成"""
+        session = ChatSession(
+            session_id=str(uuid.uuid4()),
+            user_id=user_id,
+            messages=[],
+            created_at=datetime.now(),
+            last_activity=datetime.now()
+        )
+        
+        # ウェルカムメッセージを追加
+        welcome_message = ChatMessage(
+            content="こんにちは！何かお手伝いできることはありますか？",
+            role=MessageRole.ASSISTANT,
+            timestamp=datetime.now()
+        )
+        session.add_message(welcome_message)
+        
+        await self.repository.save_session(session)
+        return session
+    
+    async def process_message(
+        self,
+        session_id: str,
+        user_message: str
+    ) -> tuple[ChatSession, str]:
+        """
+        ユーザーメッセージを処理し、応答を生成
+        
+        Returns:
+            更新されたセッションと応答テキストのタプル
+        """
+        # セッションを取得
+        session = await self.repository.find_session_by_id(session_id)
+        if not session:
+            raise SessionNotFoundError(f"Session {session_id} not found")
+        
+        # ユーザーメッセージを追加
+        user_msg = ChatMessage(
+            content=user_message,
+            role=MessageRole.USER,
+            timestamp=datetime.now(),
+            message_id=str(uuid.uuid4())
+        )
+        session.add_message(user_msg)
+        
+        # コンテキストを取得してLLMに応答を生成させる
+        context = session.get_context(max_messages=20)
+        response_text = await self.llm_service.generate_response(context)
+        
+        # 応答メッセージを追加
+        assistant_msg = ChatMessage(
+            content=response_text,
+            role=MessageRole.ASSISTANT,
+            timestamp=datetime.now(),
+            message_id=str(uuid.uuid4())
+        )
+        session.add_message(assistant_msg)
+        
+        # セッションを保存
+        await self.repository.save_session(session)
+        
+        return session, response_text
+----
+
+==== ドメイン層（ユースケース）
+
+[source,python]
+----
+# src/domain/usecases/chat_interactor.py
+from domain.services.chatbot_service import ChatbotService
+from domain.ports.presenters.chat_presenter import IChatPresenter
+from domain.entities.messages import MessageRole
+from domain.exceptions import DomainError
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ChatInteractor:
+    """
+    チャット機能のユースケース
+    ユーザーとの対話フローを管理
+    """
+    
+    def __init__(self, chatbot_service: ChatbotService):
+        self.chatbot_service = chatbot_service
+    
+    async def start_new_session(
+        self,
+        user_id: str,
+        presenter: IChatPresenter
+    ) -> str:
+        """
+        新しいチャットセッションを開始
+        
+        Returns:
+            作成されたセッションID
+        """
+        try:
+            session = await self.chatbot_service.create_session(user_id)
+            
+            # セッション情報を表示
+            presenter.present_session_info(
+                session.session_id,
+                len(session.messages)
+            )
+            
+            # ウェルカムメッセージを表示
+            if session.messages:
+                presenter.present_message(
+                    session.messages[0].content,
+                    MessageRole.ASSISTANT
+                )
+            
+            return session.session_id
+            
+        except Exception as e:
+            logger.error(f"Failed to start session: {e}")
+            presenter.present_error("セッションの開始に失敗しました")
+            raise
+    
+    async def handle_user_message(
+        self,
+        session_id: str,
+        user_message: str,
+        presenter: IChatPresenter
+    ) -> None:
+        """
+        ユーザーからのメッセージを処理
+        """
+        try:
+            # 入力を表示
+            presenter.present_message(user_message, MessageRole.USER)
+            
+            # メッセージを処理して応答を生成
+            session, response_text = await self.chatbot_service.process_message(
+                session_id,
+                user_message
+            )
+            
+            # 応答を表示
+            presenter.present_message(response_text, MessageRole.ASSISTANT)
+            
+            # セッション情報を更新表示
+            presenter.present_session_info(
+                session.session_id,
+                len(session.messages)
+            )
+            
+        except DomainError as e:
+            logger.warning(f"Domain error: {e}")
+            presenter.present_error(str(e))
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            presenter.present_error("予期しないエラーが発生しました")
+----
+
+==== アプリケーション層
+
+[source,python]
+----
+# src/application/chat_application.py
+from domain.usecases.chat_interactor import ChatInteractor
+from domain.services.chatbot_service import ChatbotService
+from domain.ports.repositories.chat_repository import IChatRepository
+from domain.ports.external.llm_service import ILLMService
+from domain.ports.presenters.chat_presenter import IChatPresenter
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ChatApplication:
+    """
+    チャットアプリケーションのエントリーポイント
+    依存性の解決とトランザクション管理を担当
+    """
+    
+    def __init__(
+        self,
+        chat_repository: IChatRepository,
+        llm_service: ILLMService
+    ):
+        # 依存性の組み立て
+        chatbot_service = ChatbotService(chat_repository, llm_service)
+        self.chat_interactor = ChatInteractor(chatbot_service)
+    
+    async def start_chat_session(
+        self,
+        user_id: str,
+        presenter: IChatPresenter
+    ) -> str:
+        """
+        新しいチャットセッションを開始
+        トランザクション境界
+        """
+        # 実際のアプリケーションではここでトランザクションを開始
+        try:
+            session_id = await self.chat_interactor.start_new_session(
+                user_id,
+                presenter
+            )
+            # トランザクションコミット
+            return session_id
+        except Exception as e:
+            # トランザクションロールバック
+            logger.error(f"Transaction failed: {e}")
+            raise
+    
+    async def process_user_message(
+        self,
+        session_id: str,
+        message: str,
+        presenter: IChatPresenter
+    ) -> None:
+        """
+        ユーザーメッセージを処理
+        トランザクション境界
+        """
+        # 実際のアプリケーションではここでトランザクションを開始
+        try:
+            await self.chat_interactor.handle_user_message(
+                session_id,
+                message,
+                presenter
+            )
+            # トランザクションコミット
+        except Exception as e:
+            # トランザクションロールバック
+            logger.error(f"Transaction failed: {e}")
+            raise
+----
+
+==== アダプター層（プレゼンター）
+
+[source,python]
+----
+# src/adapters/presenters/console_chat_presenter.py
+from domain.ports.presenters.chat_presenter import IChatPresenter
+from domain.entities.messages import MessageRole
+from datetime import datetime
+import sys
+
+class ConsoleChatPresenter(IChatPresenter):
+    """
+    コンソール出力用のプレゼンター実装
+    """
+    
+    def __init__(self):
+        self.colors = {
+            MessageRole.USER: "\033[94m",      # 青
+            MessageRole.ASSISTANT: "\033[92m",  # 緑
+            MessageRole.SYSTEM: "\033[93m",     # 黄
+            "error": "\033[91m",                # 赤
+            "reset": "\033[0m"                  # リセット
+        }
+    
+    def present_message(self, text: str, role: MessageRole) -> None:
+        """メッセージをコンソールに表示"""
+        color = self.colors.get(role, self.colors["reset"])
+        prefix = {
+            MessageRole.USER: "You",
+            MessageRole.ASSISTANT: "Bot",
+            MessageRole.SYSTEM: "System"
+        }[role]
+        
+        print(f"{color}[{prefix}]: {text}{self.colors['reset']}")
+    
+    def present_error(self, error_message: str) -> None:
+        """エラーをコンソールに表示"""
+        print(
+            f"{self.colors['error']}❌ Error: {error_message}{self.colors['reset']}",
+            file=sys.stderr
+        )
+    
+    def present_session_info(self, session_id: str, message_count: int) -> None:
+        """セッション情報をコンソールに表示"""
+        print(f"📊 Session: {session_id[:8]}... | Messages: {message_count}")
+    
+    # プレゼンター固有の補助メソッド（ポート契約外）
+    def get_user_input(self, prompt: str = "You: ") -> str:
+        """ユーザー入力を取得"""
+        return input(f"{self.colors[MessageRole.USER]}{prompt}{self.colors['reset']}")
+    
+    def clear_screen(self) -> None:
+        """画面をクリア"""
+        print("\033[2J\033[H", end="")
+    
+    def show_welcome_banner(self) -> None:
+        """ウェルカムバナーを表示"""
+        print("=" * 50)
+        print("🤖 Welcome to AI Chatbot System")
+        print("Type 'exit' or 'quit' to end the chat")
+        print("=" * 50)
+
+# src/adapters/presenters/json_chat_presenter.py
+import json
+from domain.ports.presenters.chat_presenter import IChatPresenter
+from domain.entities.messages import MessageRole
+
+class JsonChatPresenter(IChatPresenter):
+    """
+    JSON形式で出力するプレゼンター実装（API用）
+    """
+    
+    def __init__(self):
+        self.responses = []
+    
+    def present_message(self, text: str, role: MessageRole) -> None:
+        """メッセージをJSON形式で記録"""
+        self.responses.append({
+            "type": "message",
+            "role": role.value,
+            "content": text,
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def present_error(self, error_message: str) -> None:
+        """エラーをJSON形式で記録"""
+        self.responses.append({
+            "type": "error",
+            "message": error_message,
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def present_session_info(self, session_id: str, message_count: int) -> None:
+        """セッション情報をJSON形式で記録"""
+        self.responses.append({
+            "type": "session_info",
+            "session_id": session_id,
+            "message_count": message_count,
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def get_json_response(self) -> str:
+        """蓄積したレスポンスをJSON文字列として取得"""
+        return json.dumps(self.responses, ensure_ascii=False, indent=2)
+    
+    def clear(self) -> None:
+        """レスポンスをクリア"""
+        self.responses = []
+----
+
+==== アダプター層（リポジトリ）
+
+[source,python]
+----
+# src/adapters/repositories/in_memory_chat_repository.py
+from typing import Optional, List, Dict
+from domain.ports.repositories.chat_repository import IChatRepository
+from domain.entities.messages import ChatSession
+import copy
+
+class InMemoryChatRepository(IChatRepository):
+    """
+    インメモリ実装のチャットリポジトリ
+    テストや開発環境用
+    """
+    
+    def __init__(self):
+        self._sessions: Dict[str, ChatSession] = {}
+    
+    async def find_session_by_id(self, session_id: str) -> Optional[ChatSession]:
+        """セッションIDでセッションを取得"""
+        # ディープコピーを返して、外部からの変更を防ぐ
+        session = self._sessions.get(session_id)
+        return copy.deepcopy(session) if session else None
+    
+    async def save_session(self, session: ChatSession) -> None:
+        """セッションを保存"""
+        # ディープコピーを保存して、外部からの変更を防ぐ
+        self._sessions[session.session_id] = copy.deepcopy(session)
+    
+    async def find_active_sessions_by_user(self, user_id: str) -> List[ChatSession]:
+        """ユーザーのアクティブなセッション一覧を取得"""
+        active_sessions = [
+            copy.deepcopy(session)
+            for session in self._sessions.values()
+            if session.user_id == user_id and session.is_active
+        ]
+        return active_sessions
+
+# src/adapters/repositories/postgresql_chat_repository.py
+import asyncpg
+from typing import Optional, List
+from domain.ports.repositories.chat_repository import IChatRepository
+from domain.entities.messages import ChatSession, ChatMessage, MessageRole
+from datetime import datetime
+import json
+
+class PostgreSQLChatRepository(IChatRepository):
+    """
+    PostgreSQL実装のチャットリポジトリ
+    本番環境用
+    """
+    
+    def __init__(self, connection_pool: asyncpg.Pool):
+        self.pool = connection_pool
+    
+    async def find_session_by_id(self, session_id: str) -> Optional[ChatSession]:
+        """セッションIDでセッションを取得"""
+        async with self.pool.acquire() as conn:
+            # セッション情報を取得
+            row = await conn.fetchrow(
+                """
+                SELECT session_id, user_id, created_at, last_activity, is_active
+                FROM chat_sessions
+                WHERE session_id = $1
+                """,
+                session_id
+            )
+            
+            if not row:
+                return None
+            
+            # メッセージを取得
+            message_rows = await conn.fetch(
+                """
+                SELECT content, role, timestamp, message_id
+                FROM chat_messages
+                WHERE session_id = $1
+                ORDER BY timestamp ASC
+                """,
+                session_id
+            )
+            
+            # ドメインモデルに変換
+            messages = [
+                ChatMessage(
+                    content=msg['content'],
+                    role=MessageRole(msg['role']),
+                    timestamp=msg['timestamp'],
+                    message_id=msg['message_id']
+                )
+                for msg in message_rows
+            ]
+            
+            return ChatSession(
+                session_id=row['session_id'],
+                user_id=row['user_id'],
+                messages=messages,
+                created_at=row['created_at'],
+                last_activity=row['last_activity'],
+                is_active=row['is_active']
+            )
+    
+    async def save_session(self, session: ChatSession) -> None:
+        """セッションを保存"""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # セッション情報をUPSERT
+                await conn.execute(
+                    """
+                    INSERT INTO chat_sessions 
+                        (session_id, user_id, created_at, last_activity, is_active)
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (session_id) 
+                    DO UPDATE SET
+                        last_activity = EXCLUDED.last_activity,
+                        is_active = EXCLUDED.is_active
+                    """,
+                    session.session_id,
+                    session.user_id,
+                    session.created_at,
+                    session.last_activity,
+                    session.is_active
+                )
+                
+                # 既存メッセージを削除（簡略化のため）
+                await conn.execute(
+                    "DELETE FROM chat_messages WHERE session_id = $1",
+                    session.session_id
+                )
+                
+                # メッセージを挿入
+                for msg in session.messages:
+                    await conn.execute(
+                        """
+                        INSERT INTO chat_messages 
+                            (session_id, content, role, timestamp, message_id)
+                        VALUES ($1, $2, $3, $4, $5)
+                        """,
+                        session.session_id,
+                        msg.content,
+                        msg.role.value,
+                        msg.timestamp,
+                        msg.message_id
+                    )
+    
+    async def find_active_sessions_by_user(self, user_id: str) -> List[ChatSession]:
+        """ユーザーのアクティブなセッション一覧を取得"""
+        sessions = []
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT session_id
+                FROM chat_sessions
+                WHERE user_id = $1 AND is_active = true
+                ORDER BY last_activity DESC
+                """,
+                user_id
+            )
+            
+            for row in rows:
+                session = await self.find_session_by_id(row['session_id'])
+                if session:
+                    sessions.append(session)
+        
+        return sessions
+----
+
+==== アダプター層（外部サービス）
+
+[source,python]
+----
+# src/adapters/external/mock_llm_service.py
+from typing import List
+from domain.ports.external.llm_service import ILLMService
+from domain.entities.messages import ChatMessage, MessageRole
+import random
+import asyncio
+
+class MockLLMService(ILLMService):
+    """
+    LLMサービスのモック実装
+    テスト・開発用
+    """
+    
+    def __init__(self):
+        self.responses = [
+            "なるほど、それは興味深いですね。",
+            "もう少し詳しく教えていただけますか？",
+            "その点について、私の理解では...",
+            "ご質問ありがとうございます。",
+            "申し訳ございません、もう一度お聞かせください。"
+        ]
+    
+    async def generate_response(self, messages: List[ChatMessage]) -> str:
+        """メッセージ履歴から応答を生成（モック）"""
+        # 実際のLLMっぽく少し遅延を入れる
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        
+        # 最後のユーザーメッセージを取得
+        user_messages = [
+            msg for msg in messages 
+            if msg.role == MessageRole.USER
+        ]
+        
+        if not user_messages:
+            return "こんにちは！何かお手伝いできることはありますか？"
+        
+        last_user_message = user_messages[-1].content.lower()
+        
+        # 簡単なパターンマッチング
+        if "こんにちは" in last_user_message or "hello" in last_user_message:
+            return "こんにちは！今日はどのようなご用件でしょうか？"
+        elif "ありがとう" in last_user_message or "thank" in last_user_message:
+            return "どういたしまして！他に何かございますか？"
+        elif "さようなら" in last_user_message or "bye" in last_user_message:
+            return "ありがとうございました。またのご利用をお待ちしております！"
+        elif "?" in last_user_message or "？" in last_user_message:
+            return f"ご質問について：「{last_user_message}」\n詳しく回答させていただきます..."
+        else:
+            # ランダムな応答
+            return random.choice(self.responses)
+
+# src/adapters/external/openai_llm_service.py
+import openai
+from typing import List
+from domain.ports.external.llm_service import ILLMService
+from domain.entities.messages import ChatMessage, MessageRole
+
+class OpenAILLMService(ILLMService):
+    """
+    OpenAI APIを使用したLLMサービスの実装
+    本番環境用
+    """
+    
+    def __init__(self, api_key: str, model: str = "gpt-4"):
+        self.client = openai.AsyncOpenAI(api_key=api_key)
+        self.model = model
+    
+    async def generate_response(self, messages: List[ChatMessage]) -> str:
+        """メッセージ履歴から応答を生成"""
+        # ドメインモデルをOpenAI APIの形式に変換
+        api_messages = [
+            {
+                "role": self._convert_role(msg.role),
+                "content": msg.content
+            }
+            for msg in messages
+        ]
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=api_messages,
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            # インフラ層の例外をラップ
+            raise InfrastructureError(f"Failed to generate response: {e}")
+    
+    def _convert_role(self, role: MessageRole) -> str:
+        """ドメインの役割をOpenAI APIの役割に変換"""
+        role_map = {
+            MessageRole.USER: "user",
+            MessageRole.ASSISTANT: "assistant",
+            MessageRole.SYSTEM: "system"
+        }
+        return role_map[role]
+
+class InfrastructureError(Exception):
+    """インフラストラクチャ層の例外"""
+    pass
+----
+
+==== アダプター層（コントローラー）
+
+[source,python]
+----
+# src/adapters/controllers/cli_chat_controller.py
+from application.chat_application import ChatApplication
+from adapters.presenters.console_chat_presenter import ConsoleChatPresenter
+import asyncio
+import signal
+
+class CLIChatController:
+    """
+    CLIベースのチャットコントローラー
+    ユーザーとの対話を管理
+    """
+    
+    def __init__(
+        self,
+        application: ChatApplication,
+        presenter: ConsoleChatPresenter
+    ):
+        self.application = application
+        self.presenter = presenter
+        self.running = False
+        self.current_session_id = None
+    
+    async def run(self, user_id: str = "cli-user") -> None:
+        """
+        チャットセッションを実行
+        """
+        self.running = True
+        
+        # Ctrl+Cのハンドリング
+        signal.signal(signal.SIGINT, self._signal_handler)
+        
+        try:
+            # ウェルカムバナーを表示
+            self.presenter.clear_screen()
+            self.presenter.show_welcome_banner()
+            
+            # 新しいセッションを開始
+            self.current_session_id = await self.application.start_chat_session(
+                user_id,
+                self.presenter
+            )
+            
+            # メインループ
+            while self.running:
+                try:
+                    # ユーザー入力を取得
+                    user_input = self.presenter.get_user_input()
+                    
+                    # 終了コマンドのチェック
+                    if user_input.lower() in ['exit', 'quit', 'bye']:
+                        self.presenter.present_message(
+                            "チャットを終了します。ありがとうございました！",
+                            MessageRole.SYSTEM
+                        )
+                        break
+                    
+                    # 空入力のスキップ
+                    if not user_input.strip():
+                        continue
+                    
+                    # メッセージを処理
+                    await self.application.process_user_message(
+                        self.current_session_id,
+                        user_input,
+                        self.presenter
+                    )
+                    
+                except KeyboardInterrupt:
+                    break
+                except Exception as e:
+                    self.presenter.present_error(f"エラーが発生しました: {e}")
+                    
+        finally:
+            self.running = False
+    
+    def _signal_handler(self, signum, frame):
+        """シグナルハンドラー"""
+        self.running = False
+        print("\n\n👋 Goodbye!")
+        exit(0)
+
+# src/adapters/controllers/rest_chat_controller.py
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from application.chat_application import ChatApplication
+from adapters.presenters.json_chat_presenter import JsonChatPresenter
+from typing import Optional
+import uuid
+
+app = FastAPI(title="Chat API")
+
+# リクエスト/レスポンスのDTO（これはアダプター層のもの）
+class StartSessionRequest(BaseModel):
+    user_id: str
+
+class StartSessionResponse(BaseModel):
+    session_id: str
+    message: str
+
+class SendMessageRequest(BaseModel):
+    session_id: str
+    message: str
+
+class SendMessageResponse(BaseModel):
+    response: str
+    session_info: dict
+
+class RestChatController:
+    """
+    REST APIベースのチャットコントローラー
+    """
+    
+    def __init__(self, application: ChatApplication):
+        self.application = application
+    
+    async def start_session(self, request: StartSessionRequest) -> StartSessionResponse:
+        """新しいセッションを開始"""
+        presenter = JsonChatPresenter()
+        
+        try:
+            session_id = await self.application.start_chat_session(
+                request.user_id,
+                presenter
+            )
+            
+            return StartSessionResponse(
+                session_id=session_id,
+                message="Session started successfully"
+            )
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    async def send_message(self, request: SendMessageRequest) -> SendMessageResponse:
+        """メッセージを送信"""
+        presenter = JsonChatPresenter()
+        
+        try:
+            await self.application.process_user_message(
+                request.session_id,
+                request.message,
+                presenter
+            )
+            
+            # プレゼンターから結果を取得
+            response_json = presenter.get_json_response()
+            
+            return SendMessageResponse(
+                response=response_json,
+                session_info={"session_id": request.session_id}
+            )
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+# FastAPIのルート定義
+controller = RestChatController(app.state.application)  # DIコンテナから注入される想定
+
+@app.post("/sessions", response_model=StartSessionResponse)
+async def start_session(request: StartSessionRequest):
+    return await controller.start_session(request)
+
+@app.post("/messages", response_model=SendMessageResponse)
+async def send_message(request: SendMessageRequest):
+    return await controller.send_message(request)
+----
+
+=== 例2：WMS（倉庫管理システム）出庫処理
+
+次に、より実践的な例として、楽観的ロックを含むWMS出庫処理の実装を見ていきます。
+
+==== ドメイン層（エンティティ・値オブジェクト）
+
+[source,python]
+----
+# src/domain/entities/warehouse.py
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional, List
+from decimal import Decimal
+
+@dataclass(frozen=True)
+class Quantity:
+    """
+    数量を表す値オブジェクト
+    不変で、ビジネスルールを内包
+    """
+    value: int
+    
+    def __post_init__(self):
+        if self.value < 0:
+            raise ValueError("Quantity cannot be negative")
+    
+    def subtract(self, other: 'Quantity') -> 'Quantity':
+        """数量を減算"""
+        return Quantity(self.value - other.value)
+    
+    def add(self, other: 'Quantity') -> 'Quantity':
+        """数量を加算"""
+        return Quantity(self.value + other.value)
+    
+    def is_sufficient_for(self, required: 'Quantity') -> bool:
+        """必要数量に対して十分か判定"""
+        return self.value >= required.value
+    
+    def __str__(self) -> str:
+        return str(self.value)
+
+@dataclass(frozen=True)
+class Location:
+    """
+    倉庫内の位置を表す値オブジェクト
+    """
+    zone: str  # A, B, C...
+    rack: int  # 1, 2, 3...
+    shelf: int  # 1, 2, 3...
+    
+    def __post_init__(self):
+        if not self.zone or len(self.zone) != 1:
+            raise ValueError("Zone must be a single character")
+        if self.rack < 1 or self.rack > 99:
+            raise ValueError("Rack must be between 1 and 99")
+        if self.shelf < 1 or self.shelf > 10:
+            raise ValueError("Shelf must be between 1 and 10")
+    
+    def __str__(self) -> str:
+        return f"{self.zone}-{self.rack:02d}-{self.shelf:02d}"
+
+@dataclass
+class WarehouseItem:
+    """
+    倉庫アイテムを表すエンティティ
+    識別子を持ち、状態が変化する
+    """
+    item_id: str
+    name: str
+    description: str
+    quantity: Quantity
+    location: Location
+    reorder_point: Quantity  # 発注点
+    reorder_quantity: Quantity  # 発注数量
+    unit_price: Decimal
+    last_updated: datetime
+    version: int = 0  # 楽観的ロック用
+    
+    def ship(self, shipping_quantity: Quantity) -> None:
+        """
+        出庫処理（ビジネスロジック）
+        不変条件をチェックして在庫を減らす
+        """
+        if not self.quantity.is_sufficient_for(shipping_quantity):
+            from domain.exceptions import NotEnoughStockError
+            raise NotEnoughStockError(
+                f"Not enough stock for {self.name}. "
+                f"Available: {self.quantity}, Requested: {shipping_quantity}"
+            )
+        
+        self.quantity = self.quantity.subtract(shipping_quantity)
+        self.last_updated = datetime.now()
+    
+    def receive(self, receiving_quantity: Quantity) -> None:
+        """
+        入庫処理
+        """
+        self.quantity = self.quantity.add(receiving_quantity)
+        self.last_updated = datetime.now()
+    
+    def needs_reorder(self) -> bool:
+        """
+        再発注が必要か判定
+        """
+        return self.quantity.value <= self.reorder_point.value
+    
+    def move_to(self, new_location: Location) -> None:
+        """
+        位置を変更
+        """
+        self.location = new_location
+        self.last_updated = datetime.now()
+
+@dataclass
+class ShipmentRecord:
+    """
+    出庫記録を表すエンティティ
+    """
+    record_id: str
+    item_id: str
+    quantity: Quantity
+    destination: str
+    shipped_by: str
+    shipped_at: datetime
+    tracking_number: Optional[str] = None
+    notes: Optional[str] = None
+    
+    def assign_tracking_number(self, tracking_number: str) -> None:
+        """
+        トラッキング番号を割り当て
+        """
+        if self.tracking_number:
+            raise ValueError("Tracking number already assigned")
+        self.tracking_number = tracking_number
+
+@dataclass
+class StockMovement:
+    """
+    在庫移動を表す値オブジェクト（イベント的な使い方）
+    """
+    movement_id: str
+    item_id: str
+    movement_type: str  # "INBOUND", "OUTBOUND", "TRANSFER"
+    quantity: Quantity
+    from_location: Optional[Location]
+    to_location: Optional[Location]
+    reason: str
+    performed_by: str
+    performed_at: datetime
+----
+
+==== ドメイン層（例外）
+
+[source,python]
+----
+# src/domain/exceptions.py
+class DomainError(Exception):
+    """ドメイン層の基底例外"""
+    pass
+
+class ItemNotFoundError(DomainError):
+    """アイテムが見つからない"""
+    pass
+
+class NotEnoughStockError(DomainError):
+    """在庫不足"""
+    pass
+
+class ConcurrencyConflictError(DomainError):
+    """楽観的ロックの競合"""
+    pass
+
+class ValidationError(DomainError):
+    """バリデーションエラー"""
+    pass
+
+class InvalidQuantityError(ValidationError):
+    """不正な数量"""
+    pass
+
+class InvalidLocationError(ValidationError):
+    """不正な位置"""
+    pass
+
+class BusinessRuleViolationError(DomainError):
+    """ビジネスルール違反"""
+    pass
+----
+
+==== ドメイン層（ポート定義）
+
+[source,python]
+----
+# src/domain/ports/repositories/warehouse_repository.py
+from abc import ABC, abstractmethod
+from typing import Optional, List
+from domain.entities.warehouse import WarehouseItem, ShipmentRecord, StockMovement
+
+class IWarehouseRepository(ABC):
+    """
+    倉庫データの永続化に関する契約
+    """
+    
+    @abstractmethod
+    async def find_item_by_id(self, item_id: str) -> Optional[WarehouseItem]:
+        """アイテムIDでアイテムを取得"""
+        pass
+    
+    @abstractmethod
+    async def find_items_by_location(self, zone: str) -> List[WarehouseItem]:
+        """ゾーンごとのアイテム一覧を取得"""
+        pass
+    
+    @abstractmethod
+    async def save_item(self, item: WarehouseItem, expected_version: Optional[int] = None) -> None:
+        """
+        アイテムを保存（楽観的ロック対応）
+        expected_versionが指定された場合、バージョンチェックを行う
+        """
+        pass
+    
+    @abstractmethod
+    async def save_shipment_record(self, record: ShipmentRecord) -> None:
+        """出庫記録を保存"""
+        pass
+    
+    @abstractmethod
+    async def find_shipment_records_by_item(
+        self, 
+        item_id: str, 
+        limit: int = 100
+    ) -> List[ShipmentRecord]:
+        """アイテムの出庫履歴を取得"""
+        pass
+    
+    @abstractmethod
+    async def save_stock_movement(self, movement: StockMovement) -> None:
+        """在庫移動を記録"""
+        pass
+
+# src/domain/ports/presenters/warehouse_presenter.py
+from abc import ABC, abstractmethod
+from domain.entities.warehouse import WarehouseItem, ShipmentRecord
+from typing import List
+
+class IWarehousePresenter(ABC):
+    """
+    倉庫管理の出力表示に関する契約
+    """
+    
+    @abstractmethod
+    def present_shipment_success(
+        self, 
+        item: WarehouseItem, 
+        shipped_quantity: int,
+        record: ShipmentRecord
+    ) -> None:
+        """出庫成功を表示"""
+        pass
+    
+    @abstractmethod
+    def present_stock_status(self, item: WarehouseItem) -> None:
+        """在庫状況を表示"""
+        pass
+    
+    @abstractmethod
+    def present_reorder_alert(self, item: WarehouseItem) -> None:
+        """再発注アラートを表示"""
+        pass
+    
+    @abstractmethod
+    def present_error(self, error_message: str, error_code: Optional[str] = None) -> None:
+        """エラーを表示"""
+        pass
+    
+    @abstractmethod
+    def present_shipment_history(self, records: List[ShipmentRecord]) -> None:
+        """出庫履歴を表示"""
+        pass
+
+# src/domain/ports/external/notification_service.py
+from abc import ABC, abstractmethod
+from domain.entities.warehouse import WarehouseItem, ShipmentRecord
+
+class INotificationService(ABC):
+    """
+    通知サービスに関する契約
+    """
+    
+    @abstractmethod
+    async def notify_low_stock(self, item: WarehouseItem) -> None:
+        """在庫不足を通知"""
+        pass
+    
+    @abstractmethod
+    async def notify_shipment_completed(self, record: ShipmentRecord) -> None:
+        """出庫完了を通知"""
+        pass
+    
+    @abstractmethod
+    async def notify_reorder_required(self, item: WarehouseItem) -> None:
+        """再発注必要を通知"""
+        pass
+
+# src/domain/ports/external/tracking_service.py
+from abc import ABC, abstractmethod
+
+class ITrackingService(ABC):
+    """
+    配送追跡サービスに関する契約
+    """
+    
+    @abstractmethod
+    async def generate_tracking_number(self, destination: str) -> str:
+        """トラッキング番号を生成"""
+        pass
+    
+    @abstractmethod
+    async def register_shipment(
+        self, 
+        tracking_number: str, 
+        item_id: str,
+        quantity: int,
+        destination: str
+    ) -> None:
+        """配送を登録"""
+        pass
+----
+
+==== ドメイン層（サービス）
+
+[source,python]
+----
+# src/domain/services/warehouse_service.py
+from domain.ports.repositories.warehouse_repository import IWarehouseRepository
+from domain.ports.external.notification_service import INotificationService
+from domain.ports.external.tracking_service import ITrackingService
+from domain.entities.warehouse import (
+    WarehouseItem, ShipmentRecord, StockMovement, Quantity, Location
+)
+from domain.exceptions import (
+    ItemNotFoundError, ConcurrencyConflictError, BusinessRuleViolationError
+)
+from datetime import datetime
+import uuid
+import logging
+
+logger = logging.getLogger(__name__)
+
+class WarehouseService:
+    """
+    倉庫管理のコアロジックを提供するドメインサービス
+    """
+    
+    def __init__(
+        self,
+        repository: IWarehouseRepository,
+        notification_service: INotificationService,
+        tracking_service: ITrackingService
+    ):
+        self.repository = repository
+        self.notification_service = notification_service
+        self.tracking_service = tracking_service
+    
+    async def process_shipment(
+        self,
+        item_id: str,
+        quantity: int,
+        destination: str,
+        shipped_by: str
+    ) -> tuple[WarehouseItem, ShipmentRecord]:
+        """
+        出庫処理を実行
+        楽観的ロックで競合を防ぐ
+        
+        Returns:
+            更新後のアイテムと出庫記録のタプル
+        """
+        # アイテムを取得
+        item = await self.repository.find_item_by_id(item_id)
+        if not item:
+            raise ItemNotFoundError(f"Item {item_id} not found")
+        
+        # 現在のバージョンを記憶
+        current_version = item.version
+        
+        # 出庫処理（ビジネスロジック）
+        shipping_quantity = Quantity(quantity)
+        item.ship(shipping_quantity)
+        
+        # 出庫記録を作成
+        record = ShipmentRecord(
+            record_id=str(uuid.uuid4()),
+            item_id=item_id,
+            quantity=shipping_quantity,
+            destination=destination,
+            shipped_by=shipped_by,
+            shipped_at=datetime.now()
+        )
+        
+        # トラッキング番号を生成・割り当て
+        tracking_number = await self.tracking_service.generate_tracking_number(destination)
+        record.assign_tracking_number(tracking_number)
+        
+        # 配送を登録
+        await self.tracking_service.register_shipment(
+            tracking_number,
+            item_id,
+            quantity,
+            destination
+        )
+        
+        try:
+            # アイテムを保存（楽観的ロック）
+            await self.repository.save_item(item, expected_version=current_version)
+            
+            # 出庫記録を保存
+            await self.repository.save_shipment_record(record)
+            
+            # 在庫移動を記録
+            movement = StockMovement(
+                movement_id=str(uuid.uuid4()),
+                item_id=item_id,
+                movement_type="OUTBOUND",
+                quantity=shipping_quantity,
+                from_location=item.location,
+                to_location=None,
+                reason=f"Shipment to {destination}",
+                performed_by=shipped_by,
+                performed_at=datetime.now()
+            )
+            await self.repository.save_stock_movement(movement)
+            
+            # 通知を送信
+            await self.notification_service.notify_shipment_completed(record)
+            
+            # 再発注が必要か確認
+            if item.needs_reorder():
+                await self.notification_service.notify_reorder_required(item)
+            
+            return item, record
+            
+        except ConcurrencyConflictError:
+            # 楽観的ロックの競合が発生
+            logger.warning(f"Concurrency conflict for item {item_id}")
+            raise
+    
+    async def transfer_item(
+        self,
+        item_id: str,
+        new_location: Location,
+        performed_by: str
+    ) -> WarehouseItem:
+        """
+        アイテムを別の位置に移動
+        """
+        item = await self.repository.find_item_by_id(item_id)
+        if not item:
+            raise ItemNotFoundError(f"Item {item_id} not found")
+        
+        old_location = item.location
+        current_version = item.version
+        
+        # 位置を変更
+        item.move_to(new_location)
+        
+        try:
+            # 保存
+            await self.repository.save_item(item, expected_version=current_version)
+            
+            # 移動を記録
+            movement = StockMovement(
+                movement_id=str(uuid.uuid4()),
+                item_id=item_id,
+                movement_type="TRANSFER",
+                quantity=item.quantity,
+                from_location=old_location,
+                to_location=new_location,
+                reason="Location transfer",
+                performed_by=performed_by,
+                performed_at=datetime.now()
+            )
+            await self.repository.save_stock_movement(movement)
+            
+            return item
+            
+        except ConcurrencyConflictError:
+            logger.warning(f"Concurrency conflict for item {item_id} during transfer")
+            raise
+    
+    async def check_and_notify_low_stock(self, zone: Optional[str] = None) -> List[WarehouseItem]:
+        """
+        在庫不足のアイテムをチェックして通知
+        """
+        if zone:
+            items = await self.repository.find_items_by_location(zone)
+        else:
+            # 全アイテムをチェック（実際は別のメソッドが必要）
+            items = []
+        
+        low_stock_items = []
+        for item in items:
+            if item.needs_reorder():
+                low_stock_items.append(item)
+                await self.notification_service.notify_low_stock(item)
+        
+        return low_stock_items
+----
+
+==== ドメイン層（ユースケース）
+
+[source,python]
+----
+# src/domain/usecases/shipment_interactor.py
+from domain.services.warehouse_service import WarehouseService
+from domain.ports.presenters.warehouse_presenter import IWarehousePresenter
+from domain.ports.repositories.warehouse_repository import IWarehouseRepository
+from domain.entities.warehouse import Quantity
+from domain.exceptions import (
+    DomainError, ValidationError, ConcurrencyConflictError,
+    NotEnoughStockError, ItemNotFoundError
+)
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ShipmentInteractor:
+    """
+    出庫処理のユースケース
+    """
+    
+    def __init__(
+        self,
+        warehouse_service: WarehouseService,
+        warehouse_repository: IWarehouseRepository
+    ):
+        self.warehouse_service = warehouse_service
+        self.warehouse_repository = warehouse_repository
+    
+    async def process_shipment_request(
+        self,
+        item_id: str,
+        quantity: int,
+        destination: str,
+        shipped_by: str,
+        presenter: IWarehousePresenter
+    ) -> None:
+        """
+        出庫リクエストを処理
+        """
+        try:
+            # 入力バリデーション
+            if quantity <= 0:
+                raise ValidationError("Quantity must be positive")
+            if not destination or not destination.strip():
+                raise ValidationError("Destination is required")
+            if not shipped_by or not shipped_by.strip():
+                raise ValidationError("Shipper information is required")
+            
+            # 出庫処理を実行
+            item, record = await self.warehouse_service.process_shipment(
+                item_id,
+                quantity,
+                destination,
+                shipped_by
+            )
+            
+            # 成功を表示
+            presenter.present_shipment_success(item, quantity, record)
+            
+            # 在庫状況を表示
+            presenter.present_stock_status(item)
+            
+            # 再発注が必要な場合はアラートを表示
+            if item.needs_reorder():
+                presenter.present_reorder_alert(item)
+            
+        except ValidationError as e:
+            logger.warning(f"Validation error: {e}")
+            presenter.present_error(str(e), "VALIDATION_ERROR")
+            
+        except NotEnoughStockError as e:
+            logger.warning(f"Not enough stock: {e}")
+            presenter.present_error(str(e), "INSUFFICIENT_STOCK")
+            
+        except ItemNotFoundError as e:
+            logger.warning(f"Item not found: {e}")
+            presenter.present_error(str(e), "ITEM_NOT_FOUND")
+            
+        except ConcurrencyConflictError as e:
+            logger.warning(f"Concurrency conflict: {e}")
+            presenter.present_error(
+                "他の処理と競合しました。再度お試しください。",
+                "CONCURRENCY_CONFLICT"
+            )
+            
+        except DomainError as e:
+            logger.error(f"Domain error: {e}")
+            presenter.present_error(str(e), "DOMAIN_ERROR")
+            
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            presenter.present_error(
+                "予期しないエラーが発生しました",
+                "INTERNAL_ERROR"
+            )
+    
+    async def show_shipment_history(
+        self,
+        item_id: str,
+        limit: int,
+        presenter: IWarehousePresenter
+    ) -> None:
+        """
+        出庫履歴を表示
+        """
+        try:
+            # アイテムの存在確認
+            item = await self.warehouse_repository.find_item_by_id(item_id)
+            if not item:
+                raise ItemNotFoundError(f"Item {item_id} not found")
+            
+            # 履歴を取得
+            records = await self.warehouse_repository.find_shipment_records_by_item(
+                item_id,
+                limit
+            )
+            
+            # 表示
+            presenter.present_shipment_history(records)
+            presenter.present_stock_status(item)
+            
+        except ItemNotFoundError as e:
+            logger.warning(f"Item not found: {e}")
+            presenter.present_error(str(e), "ITEM_NOT_FOUND")
+            
+        except Exception as e:
+            logger.error(f"Failed to show history: {e}", exc_info=True)
+            presenter.present_error(
+                "履歴の取得に失敗しました",
+                "INTERNAL_ERROR"
+            )
+
+class InventoryInteractor:
+    """
+    在庫管理のユースケース
+    """
+    
+    def __init__(
+        self,
+        warehouse_service: WarehouseService,
+        warehouse_repository: IWarehouseRepository
+    ):
+        self.warehouse_service = warehouse_service
+        self.warehouse_repository = warehouse_repository
+    
+    async def check_low_stock_items(
+        self,
+        zone: Optional[str],
+        presenter: IWarehousePresenter
+    ) -> None:
+        """
+        在庫不足のアイテムをチェック
+        """
+        try:
+            low_stock_items = await self.warehouse_service.check_and_notify_low_stock(zone)
+            
+            if low_stock_items:
+                for item in low_stock_items:
+                    presenter.present_reorder_alert(item)
+                    presenter.present_stock_status(item)
+            else:
+                presenter.present_error(
+                    "在庫不足のアイテムはありません",
+                    "NO_LOW_STOCK"
+                )
+                
+        except Exception as e:
+            logger.error(f"Failed to check low stock: {e}", exc_info=True)
+            presenter.present_error(
+                "在庫チェックに失敗しました",
+                "INTERNAL_ERROR"
+            )
+----
+
+==== アプリケーション層
+
+[source,python]
+----
+# src/application/warehouse_application.py
+from domain.usecases.shipment_interactor import ShipmentInteractor, InventoryInteractor
+from domain.services.warehouse_service import WarehouseService
+from domain.ports.repositories.warehouse_repository import IWarehouseRepository
+from domain.ports.external.notification_service import INotificationService
+from domain.ports.external.tracking_service import ITrackingService
+from domain.ports.presenters.warehouse_presenter import IWarehousePresenter
+import logging
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+class WarehouseApplication:
+    """
+    倉庫管理アプリケーションのエントリーポイント
+    トランザクション管理と依存性の解決を担当
+    """
+    
+    def __init__(
+        self,
+        warehouse_repository: IWarehouseRepository,
+        notification_service: INotificationService,
+        tracking_service: ITrackingService
+    ):
+        # 依存性の組み立て
+        warehouse_service = WarehouseService(
+            warehouse_repository,
+            notification_service,
+            tracking_service
+        )
+        
+        self.shipment_interactor = ShipmentInteractor(
+            warehouse_service,
+            warehouse_repository
+        )
+        
+        self.inventory_interactor = InventoryInteractor(
+            warehouse_service,
+            warehouse_repository
+        )
+    
+    async def process_shipment(
+        self,
+        item_id: str,
+        quantity: int,
+        destination: str,
+        shipped_by: str,
+        presenter: IWarehousePresenter
+    ) -> None:
+        """
+        出庫処理（トランザクション境界）
+        """
+        # 実際のアプリケーションではここでトランザクションを開始
+        # async with self.transaction_manager.begin():
+        try:
+            await self.shipment_interactor.process_shipment_request(
+                item_id,
+                quantity,
+                destination,
+                shipped_by,
+                presenter
+            )
+            # トランザクションコミット（自動）
+        except Exception as e:
+            # トランザクションロールバック（自動）
+            logger.error(f"Shipment transaction failed: {e}")
+            raise
+    
+    async def show_shipment_history(
+        self,
+        item_id: str,
+        limit: int,
+        presenter: IWarehousePresenter
+    ) -> None:
+        """
+        出庫履歴表示（読み取り専用）
+        """
+        await self.shipment_interactor.show_shipment_history(
+            item_id,
+            limit,
+            presenter
+        )
+    
+    async def check_inventory_status(
+        self,
+        zone: Optional[str],
+        presenter: IWarehousePresenter
+    ) -> None:
+        """
+        在庫状況チェック（読み取り専用）
+        """
+        await self.inventory_interactor.check_low_stock_items(
+            zone,
+            presenter
+        )
+----
+
+==== アダプター層（プレゼンター）
+
+[source,python]
+----
+# src/adapters/presenters/console_warehouse_presenter.py
+from domain.ports.presenters.warehouse_presenter import IWarehousePresenter
+from domain.entities.warehouse import WarehouseItem, ShipmentRecord
+from typing import List, Optional
+from datetime import datetime
+from decimal import Decimal
+
+class ConsoleWarehousePresenter(IWarehousePresenter):
+    """
+    コンソール出力用の倉庫管理プレゼンター
+    """
+    
+    def __init__(self):
+        self.colors = {
+            "success": "\033[92m",  # 緑
+            "warning": "\033[93m",  # 黄
+            "error": "\033[91m",    # 赤
+            "info": "\033[94m",     # 青
+            "reset": "\033[0m"      # リセット
+        }
+    
+    def present_shipment_success(
+        self,
+        item: WarehouseItem,
+        shipped_quantity: int,
+        record: ShipmentRecord
+    ) -> None:
+        """出庫成功を表示"""
+        print(f"{self.colors['success']}✅ 出庫成功{self.colors['reset']}")
+        print(f"  商品: {item.name} (ID: {item.item_id})")
+        print(f"  出庫数: {shipped_quantity}")
+        print(f"  残在庫: {item.quantity}")
+        print(f"  送付先: {record.destination}")
+        print(f"  追跡番号: {record.tracking_number}")
+        print(f"  出庫日時: {record.shipped_at.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    def present_stock_status(self, item: WarehouseItem) -> None:
+        """在庫状況を表示"""
+        status_color = self.colors['info']
+        if item.needs_reorder():
+            status_color = self.colors['warning']
+        
+        print(f"\n{status_color}📦 在庫状況{self.colors['reset']}")
+        print(f"  商品: {item.name}")
+        print(f"  ID: {item.item_id}")
+        print(f"  現在庫: {item.quantity}")
+        print(f"  発注点: {item.reorder_point}")
+        print(f"  位置: {item.location}")
+        print(f"  単価: ¥{item.unit_price:,.0f}")
+        print(f"  在庫金額: ¥{item.unit_price * item.quantity.value:,.0f}")
+    
+    def present_reorder_alert(self, item: WarehouseItem) -> None:
+        """再発注アラートを表示"""
+        print(f"\n{self.colors['warning']}⚠️  再発注が必要です{self.colors['reset']}")
+        print(f"  商品: {item.name} (ID: {item.item_id})")
+        print(f"  現在庫: {item.quantity}")
+        print(f"  発注点: {item.reorder_point}")
+        print(f"  推奨発注数: {item.reorder_quantity}")
+    
+    def present_error(self, error_message: str, error_code: Optional[str] = None) -> None:
+        """エラーを表示"""
+        print(f"\n{self.colors['error']}❌ エラー{self.colors['reset']}")
+        if error_code:
+            print(f"  コード: {error_code}")
+        print(f"  メッセージ: {error_message}")
+    
+    def present_shipment_history(self, records: List[ShipmentRecord]) -> None:
+        """出庫履歴を表示"""
+        print(f"\n{self.colors['info']}📋 出庫履歴{self.colors['reset']}")
+        
+        if not records:
+            print("  履歴がありません")
+            return
+        
+        print(f"  全{len(records)}件")
+        print("-" * 80)
+        
+        for record in records:
+            print(f"  日時: {record.shipped_at.strftime('%Y-%m-%d %H:%M')}")
+            print(f"  数量: {record.quantity}")
+            print(f"  送付先: {record.destination}")
+            print(f"  追跡番号: {record.tracking_number or 'N/A'}")
+            print(f"  担当者: {record.shipped_by}")
+            if record.notes:
+                print(f"  備考: {record.notes}")
+            print("-" * 80)
+
+# src/adapters/presenters/json_warehouse_presenter.py
+import json
+from domain.ports.presenters.warehouse_presenter import IWarehousePresenter
+from domain.entities.warehouse import WarehouseItem, ShipmentRecord
+from typing import List, Optional
+from decimal import Decimal
+
+class JsonWarehousePresenter(IWarehousePresenter):
+    """
+    JSON形式で出力する倉庫管理プレゼンター（API用）
+    """
+    
+    def __init__(self):
+        self.responses = []
+    
+    def present_shipment_success(
+        self,
+        item: WarehouseItem,
+        shipped_quantity: int,
+        record: ShipmentRecord
+    ) -> None:
+        """出庫成功をJSON形式で記録"""
+        self.responses.append({
+            "type": "shipment_success",
+            "data": {
+                "item": {
+                    "id": item.item_id,
+                    "name": item.name,
+                    "remaining_quantity": item.quantity.value,
+                    "location": str(item.location)
+                },
+                "shipment": {
+                    "record_id": record.record_id,
+                    "quantity": shipped_quantity,
+                    "destination": record.destination,
+                    "tracking_number": record.tracking_number,
+                    "shipped_at": record.shipped_at.isoformat()
+                }
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def present_stock_status(self, item: WarehouseItem) -> None:
+        """在庫状況をJSON形式で記録"""
+        self.responses.append({
+            "type": "stock_status",
+            "data": {
+                "item_id": item.item_id,
+                "name": item.name,
+                "quantity": item.quantity.value,
+                "reorder_point": item.reorder_point.value,
+                "needs_reorder": item.needs_reorder(),
+                "location": str(item.location),
+                "unit_price": float(item.unit_price),
+                "total_value": float(item.unit_price * item.quantity.value)
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def present_reorder_alert(self, item: WarehouseItem) -> None:
+        """再発注アラートをJSON形式で記録"""
+        self.responses.append({
+            "type": "reorder_alert",
+            "data": {
+                "item_id": item.item_id,
+                "name": item.name,
+                "current_quantity": item.quantity.value,
+                "reorder_point": item.reorder_point.value,
+                "reorder_quantity": item.reorder_quantity.value
+            },
+            "severity": "warning",
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def present_error(self, error_message: str, error_code: Optional[str] = None) -> None:
+        """エラーをJSON形式で記録"""
+        self.responses.append({
+            "type": "error",
+            "error_code": error_code,
+            "message": error_message,
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def present_shipment_history(self, records: List[ShipmentRecord]) -> None:
+        """出庫履歴をJSON形式で記録"""
+        history_data = []
+        for record in records:
+            history_data.append({
+                "record_id": record.record_id,
+                "item_id": record.item_id,
+                "quantity": record.quantity.value,
+                "destination": record.destination,
+                "tracking_number": record.tracking_number,
+                "shipped_by": record.shipped_by,
+                "shipped_at": record.shipped_at.isoformat(),
+                "notes": record.notes
+            })
+        
+        self.responses.append({
+            "type": "shipment_history",
+            "data": history_data,
+            "total_count": len(records),
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def get_json_response(self) -> str:
+        """蓄積したレスポンスをJSON文字列として取得"""
+        return json.dumps(self.responses, ensure_ascii=False, indent=2)
+    
+    def clear(self) -> None:
+        """レスポンスをクリア"""
+        self.responses = []
+----
+
+==== アダプター層（リポジトリ）
+
+[source,python]
+----
+# src/adapters/repositories/postgresql_warehouse_repository.py
+import asyncpg
+from typing import Optional, List
+from domain.ports.repositories.warehouse_repository import IWarehouseRepository
+from domain.entities.warehouse import (
+    WarehouseItem, ShipmentRecord, StockMovement,
+    Quantity, Location
+)
+from domain.exceptions import ConcurrencyConflictError
+from decimal import Decimal
+import json
+
+class PostgreSQLWarehouseRepository(IWarehouseRepository):
+    """
+    PostgreSQL実装の倉庫リポジトリ
+    """
+    
+    def __init__(self, connection_pool: asyncpg.Pool):
+        self.pool = connection_pool
+    
+    async def find_item_by_id(self, item_id: str) -> Optional[WarehouseItem]:
+        """アイテムIDでアイテムを取得"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT item_id, name, description, quantity, 
+                       zone, rack, shelf, reorder_point, reorder_quantity,
+                       unit_price, last_updated, version
+                FROM warehouse_items
+                WHERE item_id = $1
+                """,
+                item_id
+            )
+            
+            if not row:
+                return None
+            
+            return self._row_to_domain(row)
+    
+    async def find_items_by_location(self, zone: str) -> List[WarehouseItem]:
+        """ゾーンごとのアイテム一覧を取得"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT item_id, name, description, quantity, 
+                       zone, rack, shelf, reorder_point, reorder_quantity,
+                       unit_price, last_updated, version
+                FROM warehouse_items
+                WHERE zone = $1
+                ORDER BY rack, shelf
+                """,
+                zone
+            )
+            
+            return [self._row_to_domain(row) for row in rows]
+    
+    async def save_item(
+        self,
+        item: WarehouseItem,
+        expected_version: Optional[int] = None
+    ) -> None:
+        """
+        アイテムを保存（楽観的ロック対応）
+        """
+        async with self.pool.acquire() as conn:
+            if expected_version is not None:
+                # 楽観的ロックチェック付きの更新
+                result = await conn.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET name = $2, description = $3, quantity = $4,
+                        zone = $5, rack = $6, shelf = $7,
+                        reorder_point = $8, reorder_quantity = $9,
+                        unit_price = $10, last_updated = $11, version = version + 1
+                    WHERE item_id = $1 AND version = $12
+                    """,
+                    item.item_id, item.name, item.description, item.quantity.value,
+                    item.location.zone, item.location.rack, item.location.shelf,
+                    item.reorder_point.value, item.reorder_quantity.value,
+                    item.unit_price, item.last_updated, expected_version
+                )
+                
+                if result == "UPDATE 0":
+                    raise ConcurrencyConflictError(
+                        f"Version mismatch for item {item.item_id}. "
+                        f"Expected version {expected_version}"
+                    )
+            else:
+                # 新規作成または強制更新
+                await conn.execute(
+                    """
+                    INSERT INTO warehouse_items 
+                        (item_id, name, description, quantity, 
+                         zone, rack, shelf, reorder_point, reorder_quantity,
+                         unit_price, last_updated, version)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    ON CONFLICT (item_id) 
+                    DO UPDATE SET
+                        name = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        quantity = EXCLUDED.quantity,
+                        zone = EXCLUDED.zone,
+                        rack = EXCLUDED.rack,
+                        shelf = EXCLUDED.shelf,
+                        reorder_point = EXCLUDED.reorder_point,
+                        reorder_quantity = EXCLUDED.reorder_quantity,
+                        unit_price = EXCLUDED.unit_price,
+                        last_updated = EXCLUDED.last_updated,
+                        version = warehouse_items.version + 1
+                    """,
+                    item.item_id, item.name, item.description, item.quantity.value,
+                    item.location.zone, item.location.rack, item.location.shelf,
+                    item.reorder_point.value, item.reorder_quantity.value,
+                    item.unit_price, item.last_updated, item.version
+                )
+    
+    async def save_shipment_record(self, record: ShipmentRecord) -> None:
+        """出庫記録を保存"""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO shipment_records
+                    (record_id, item_id, quantity, destination,
+                     shipped_by, shipped_at, tracking_number, notes)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                record.record_id, record.item_id, record.quantity.value,
+                record.destination, record.shipped_by, record.shipped_at,
+                record.tracking_number, record.notes
+            )
+    
+    async def find_shipment_records_by_item(
+        self,
+        item_id: str,
+        limit: int = 100
+    ) -> List[ShipmentRecord]:
+        """アイテムの出庫履歴を取得"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT record_id, item_id, quantity, destination,
+                       shipped_by, shipped_at, tracking_number, notes
+                FROM shipment_records
+                WHERE item_id = $1
+                ORDER BY shipped_at DESC
+                LIMIT $2
+                """,
+                item_id, limit
+            )
+            
+            records = []
+            for row in rows:
+                records.append(ShipmentRecord(
+                    record_id=row['record_id'],
+                    item_id=row['item_id'],
+                    quantity=Quantity(row['quantity']),
+                    destination=row['destination'],
+                    shipped_by=row['shipped_by'],
+                    shipped_at=row['shipped_at'],
+                    tracking_number=row['tracking_number'],
+                    notes=row['notes']
+                ))
+            
+            return records
+    
+    async def save_stock_movement(self, movement: StockMovement) -> None:
+        """在庫移動を記録"""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO stock_movements
+                    (movement_id, item_id, movement_type, quantity,
+                     from_zone, from_rack, from_shelf,
+                     to_zone, to_rack, to_shelf,
+                     reason, performed_by, performed_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                """,
+                movement.movement_id, movement.item_id, movement.movement_type,
+                movement.quantity.value,
+                movement.from_location.zone if movement.from_location else None,
+                movement.from_location.rack if movement.from_location else None,
+                movement.from_location.shelf if movement.from_location else None,
+                movement.to_location.zone if movement.to_location else None,
+                movement.to_location.rack if movement.to_location else None,
+                movement.to_location.shelf if movement.to_location else None,
+                movement.reason, movement.performed_by, movement.performed_at
+            )
+    
+    def _row_to_domain(self, row) -> WarehouseItem:
+        """データベースの行をドメインモデルに変換"""
+        return WarehouseItem(
+            item_id=row['item_id'],
+            name=row['name'],
+            description=row['description'],
+            quantity=Quantity(row['quantity']),
+            location=Location(
+                zone=row['zone'],
+                rack=row['rack'],
+                shelf=row['shelf']
+            ),
+            reorder_point=Quantity(row['reorder_point']),
+            reorder_quantity=Quantity(row['reorder_quantity']),
+            unit_price=Decimal(str(row['unit_price'])),
+            last_updated=row['last_updated'],
+            version=row['version']
+        )
+----
+
+==== アダプター層（外部サービス）
+
+[source,python]
+----
+# src/adapters/external/email_notification_service.py
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from domain.ports.external.notification_service import INotificationService
+from domain.entities.warehouse import WarehouseItem, ShipmentRecord
+import logging
+
+logger = logging.getLogger(__name__)
+
+class EmailNotificationService(INotificationService):
+    """
+    メール通知サービスの実装
+    """
+    
+    def __init__(
+        self,
+        smtp_host: str,
+        smtp_port: int,
+        username: str,
+        password: str,
+        from_address: str,
+        admin_addresses: List[str]
+    ):
+        self.smtp_host = smtp_host
+        self.smtp_port = smtp_port
+        self.username = username
+        self.password = password
+        self.from_address = from_address
+        self.admin_addresses = admin_addresses
+    
+    async def notify_low_stock(self, item: WarehouseItem) -> None:
+        """在庫不足を通知"""
+        subject = f"【在庫不足アラート】{item.name}"
+        
+        body = f"""
+        在庫が発注点を下回りました。
+        
+        商品情報:
+        - 商品名: {item.name}
+        - 商品ID: {item.item_id}
+        - 現在庫: {item.quantity}
+        - 発注点: {item.reorder_point}
+        - 推奨発注数: {item.reorder_quantity}
+        - 保管場所: {item.location}
+        
+        早急に発注をご検討ください。
+        """
+        
+        await self._send_email(self.admin_addresses, subject, body)
+    
+    async def notify_shipment_completed(self, record: ShipmentRecord) -> None:
+        """出庫完了を通知"""
+        subject = f"【出庫完了】追跡番号: {record.tracking_number}"
+        
+        body = f"""
+        出庫処理が完了しました。
+        
+        出庫情報:
+        - 商品ID: {record.item_id}
+        - 数量: {record.quantity}
+        - 送付先: {record.destination}
+        - 追跡番号: {record.tracking_number}
+        - 出庫日時: {record.shipped_at.strftime('%Y年%m月%d日 %H:%M')}
+        - 担当者: {record.shipped_by}
+        
+        配送状況は追跡番号でご確認ください。
+        """
+        
+        # 実際は送付先のメールアドレスも含める
+        await self._send_email(self.admin_addresses, subject, body)
+    
+    async def notify_reorder_required(self, item: WarehouseItem) -> None:
+        """再発注必要を通知"""
+        subject = f"【再発注推奨】{item.name}"
+        
+        body = f"""
+        在庫が発注点に達したため、再発注を推奨します。
+        
+        商品情報:
+        - 商品名: {item.name}
+        - 商品ID: {item.item_id}
+        - 現在庫: {item.quantity}
+        - 発注点: {item.reorder_point}
+        - 推奨発注数: {item.reorder_quantity}
+        - 在庫金額: ¥{item.unit_price * item.quantity.value:,.0f}
+        
+        発注処理をお願いします。
+        """
+        
+        await self._send_email(self.admin_addresses, subject, body)
+    
+    async def _send_email(
+        self,
+        to_addresses: List[str],
+        subject: str,
+        body: str
+    ) -> None:
+        """メールを送信"""
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = self.from_address
+            msg['To'] = ', '.join(to_addresses)
+            msg['Subject'] = subject
+            
+            msg.attach(MIMEText(body, 'plain', 'utf-8'))
+            
+            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+                server.starttls()
+                server.login(self.username, self.password)
+                server.send_message(msg)
+            
+            logger.info(f"Email sent: {subject}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send email: {e}")
+            # 通知の失敗はビジネスロジックを止めない
+
+# src/adapters/external/mock_notification_service.py
+from domain.ports.external.notification_service import INotificationService
+from domain.entities.warehouse import WarehouseItem, ShipmentRecord
+import logging
+
+logger = logging.getLogger(__name__)
+
+class MockNotificationService(INotificationService):
+    """
+    通知サービスのモック実装（テスト・開発用）
+    """
+    
+    def __init__(self):
+        self.notifications = []
+    
+    async def notify_low_stock(self, item: WarehouseItem) -> None:
+        """在庫不足を通知（モック）"""
+        notification = {
+            "type": "low_stock",
+            "item_id": item.item_id,
+            "item_name": item.name,
+            "quantity": item.quantity.value,
+            "reorder_point": item.reorder_point.value
+        }
+        self.notifications.append(notification)
+        logger.info(f"[MOCK] Low stock notification: {item.name}")
+    
+    async def notify_shipment_completed(self, record: ShipmentRecord) -> None:
+        """出庫完了を通知（モック）"""
+        notification = {
+            "type": "shipment_completed",
+            "record_id": record.record_id,
+            "tracking_number": record.tracking_number,
+            "destination": record.destination
+        }
+        self.notifications.append(notification)
+        logger.info(f"[MOCK] Shipment notification: {record.tracking_number}")
+    
+    async def notify_reorder_required(self, item: WarehouseItem) -> None:
+        """再発注必要を通知（モック）"""
+        notification = {
+            "type": "reorder_required",
+            "item_id": item.item_id,
+            "item_name": item.name,
+            "reorder_quantity": item.reorder_quantity.value
+        }
+        self.notifications.append(notification)
+        logger.info(f"[MOCK] Reorder notification: {item.name}")
+    
+    def get_notifications(self) -> List[dict]:
+        """送信された通知を取得（テスト用）"""
+        return self.notifications.copy()
+    
+    def clear_notifications(self) -> None:
+        """通知をクリア（テスト用）"""
+        self.notifications.clear()
+
+# src/adapters/external/ups_tracking_service.py
+from domain.ports.external.tracking_service import ITrackingService
+import httpx
+import uuid
+from typing import Dict
+
+class UPSTrackingService(ITrackingService):
+    """
+    UPS配送追跡サービスの実装
+    """
+    
+    def __init__(
+        self,
+        api_key: str,
+        account_number: str,
+        base_url: str = "https://api.ups.com"
+    ):
+        self.api_key = api_key
+        self.account_number = account_number
+        self.base_url = base_url
+        self.client = httpx.AsyncClient()
+    
+    async def generate_tracking_number(self, destination: str) -> str:
+        """トラッキング番号を生成"""
+        # 実際のAPIコール
+        response = await self.client.post(
+            f"{self.base_url}/tracking/v1/generate",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "account_number": self.account_number,
+                "destination": destination
+            }
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data["tracking_number"]
+        else:
+            # エラーハンドリング
+            raise InfrastructureError(f"Failed to generate tracking number: {response.text}")
+    
+    async def register_shipment(
+        self,
+        tracking_number: str,
+        item_id: str,
+        quantity: int,
+        destination: str
+    ) -> None:
+        """配送を登録"""
+        response = await self.client.post(
+            f"{self.base_url}/shipments/v1/register",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "tracking_number": tracking_number,
+                "package_info": {
+                    "item_id": item_id,
+                    "quantity": quantity,
+                    "destination": destination
+                }
+            }
+        )
+        
+        if response.status_code != 201:
+            raise InfrastructureError(f"Failed to register shipment: {response.text}")
+    
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.client.aclose()
+
+# src/adapters/external/mock_tracking_service.py
+from domain.ports.external.tracking_service import ITrackingService
+import uuid
+import random
+import string
+
+class MockTrackingService(ITrackingService):
+    """
+    配送追跡サービスのモック実装（テスト・開発用）
+    """
+    
+    def __init__(self):
+        self.shipments = {}
+    
+    async def generate_tracking_number(self, destination: str) -> str:
+        """トラッキング番号を生成（モック）"""
+        # モックのトラッキング番号を生成
+        prefix = "MOCK"
+        random_part = ''.join(random.choices(string.digits, k=10))
+        tracking_number = f"{prefix}{random_part}"
+        return tracking_number
+    
+    async def register_shipment(
+        self,
+        tracking_number: str,
+        item_id: str,
+        quantity: int,
+        destination: str
+    ) -> None:
+        """配送を登録（モック）"""
+        self.shipments[tracking_number] = {
+            "item_id": item_id,
+            "quantity": quantity,
+            "destination": destination,
+            "status": "REGISTERED"
+        }
+    
+    def get_shipment(self, tracking_number: str) -> Optional[dict]:
+        """登録された配送を取得（テスト用）"""
+        return self.shipments.get(tracking_number)
+    
+    def clear_shipments(self) -> None:
+        """配送情報をクリア（テスト用）"""
+        self.shipments.clear()
+
+class InfrastructureError(Exception):
+    """インフラストラクチャ層の例外"""
+    pass
+----
+
+==== アダプター層（コントローラー）
+
+[source,python]
+----
+# src/adapters/controllers/cli_warehouse_controller.py
+from application.warehouse_application import WarehouseApplication
+from adapters.presenters.console_warehouse_presenter import ConsoleWarehousePresenter
+import asyncio
+
+class CLIWarehouseController:
+    """
+    CLIベースの倉庫管理コントローラー
+    """
+    
+    def __init__(
+        self,
+        application: WarehouseApplication,
+        presenter: ConsoleWarehousePresenter
+    ):
+        self.application = application
+        self.presenter = presenter
+    
+    async def run(self) -> None:
+        """
+        倉庫管理CLIを実行
+        """
+        print("=" * 50)
+        print("📦 倉庫管理システム (WMS)")
+        print("=" * 50)
+        
+        while True:
+            print("\n操作を選択してください:")
+            print("1. 出庫処理")
+            print("2. 出庫履歴表示")
+            print("3. 在庫状況確認")
+            print("0. 終了")
+            
+            choice = input("\n選択: ").strip()
+            
+            if choice == "0":
+                print("システムを終了します。")
+                break
+            elif choice == "1":
+                await self._process_shipment()
+            elif choice == "2":
+                await self._show_history()
+            elif choice == "3":
+                await self._check_inventory()
+            else:
+                print("無効な選択です。")
+    
+    async def _process_shipment(self) -> None:
+        """出庫処理"""
+        try:
+            print("\n--- 出庫処理 ---")
+            item_id = input("商品ID: ").strip()
+            quantity = int(input("出庫数: ").strip())
+            destination = input("送付先: ").strip()
+            shipped_by = input("担当者名: ").strip()
+            
+            await self.application.process_shipment(
+                item_id,
+                quantity,
+                destination,
+                shipped_by,
+                self.presenter
+            )
+            
+        except ValueError:
+            self.presenter.present_error("入力値が不正です", "INPUT_ERROR")
+        except Exception as e:
+            self.presenter.present_error(str(e), "UNEXPECTED_ERROR")
+    
+    async def _show_history(self) -> None:
+        """出庫履歴表示"""
+        try:
+            print("\n--- 出庫履歴表示 ---")
+            item_id = input("商品ID: ").strip()
+            limit = int(input("表示件数 (デフォルト: 10): ").strip() or "10")
+            
+            await self.application.show_shipment_history(
+                item_id,
+                limit,
+                self.presenter
+            )
+            
+        except ValueError:
+            self.presenter.present_error("入力値が不正です", "INPUT_ERROR")
+        except Exception as e:
+            self.presenter.present_error(str(e), "UNEXPECTED_ERROR")
+    
+    async def _check_inventory(self) -> None:
+        """在庫状況確認"""
+        try:
+            print("\n--- 在庫状況確認 ---")
+            zone = input("ゾーン (空白で全体): ").strip() or None
+            
+            await self.application.check_inventory_status(
+                zone,
+                self.presenter
+            )
+            
+        except Exception as e:
+            self.presenter.present_error(str(e), "UNEXPECTED_ERROR")
+
+# src/adapters/controllers/rest_warehouse_controller.py
+from fastapi import FastAPI, HTTPException, Depends, status
+from pydantic import BaseModel, Field, validator
+from application.warehouse_application import WarehouseApplication
+from adapters.presenters.json_warehouse_presenter import JsonWarehousePresenter
+from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Warehouse Management API", version="1.0.0")
+
+# DTOs（アダプター層のデータ転送オブジェクト）
+class ShipmentRequest(BaseModel):
+    item_id: str = Field(..., min_length=1, max_length=50)
+    quantity: int = Field(..., gt=0, le=10000)
+    destination: str = Field(..., min_length=1, max_length=200)
+    shipped_by: str = Field(..., min_length=1, max_length=100)
+    
+    @validator('item_id', 'destination', 'shipped_by')
+    def strip_whitespace(cls, v):
+        return v.strip()
+
+class ShipmentResponse(BaseModel):
+    success: bool
+    data: dict
+    message: Optional[str] = None
+
+class HistoryRequest(BaseModel):
+    item_id: str = Field(..., min_length=1, max_length=50)
+    limit: int = Field(default=100, gt=0, le=1000)
+
+class InventoryCheckRequest(BaseModel):
+    zone: Optional[str] = Field(None, min_length=1, max_length=1)
+
+class ErrorResponse(BaseModel):
+    error_code: str
+    message: str
+    details: Optional[dict] = None
+
+class RestWarehouseController:
+    """
+    REST APIベースの倉庫管理コントローラー
+    """
+    
+    def __init__(self, application: WarehouseApplication):
+        self.application = application
+    
+    async def process_shipment(self, request: ShipmentRequest) -> ShipmentResponse:
+        """出庫処理エンドポイント"""
+        presenter = JsonWarehousePresenter()
+        
+        try:
+            await self.application.process_shipment(
+                request.item_id,
+                request.quantity,
+                request.destination,
+                request.shipped_by,
+                presenter
+            )
+            
+            response_data = presenter.get_json_response()
+            
+            return ShipmentResponse(
+                success=True,
+                data={"response": response_data},
+                message="Shipment processed successfully"
+            )
+            
+        except Exception as e:
+            logger.error(f"Shipment processing failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e)
+            )
+    
+    async def get_shipment_history(self, request: HistoryRequest) -> dict:
+        """出庫履歴取得エンドポイント"""
+        presenter = JsonWarehousePresenter()
+        
+        try:
+            await self.application.show_shipment_history(
+                request.item_id,
+                request.limit,
+                presenter
+            )
+            
+            response_data = presenter.get_json_response()
+            return {"success": True, "data": response_data}
+            
+        except Exception as e:
+            logger.error(f"Failed to get history: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e)
+            )
+    
+    async def check_inventory(self, request: InventoryCheckRequest) -> dict:
+        """在庫確認エンドポイント"""
+        presenter = JsonWarehousePresenter()
+        
+        try:
+            await self.application.check_inventory_status(
+                request.zone,
+                presenter
+            )
+            
+            response_data = presenter.get_json_response()
+            return {"success": True, "data": response_data}
+            
+        except Exception as e:
+            logger.error(f"Failed to check inventory: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e)
+            )
+
+# FastAPIルート定義
+controller = RestWarehouseController(app.state.application)  # DIコンテナから注入
+
+@app.post(
+    "/api/v1/shipments",
+    response_model=ShipmentResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Shipments"]
+)
+async def process_shipment(request: ShipmentRequest):
+    """
+    出庫処理を実行します。
+    
+    在庫から指定された数量を減らし、出庫記録を作成します。
+    楽観的ロックにより、同時更新の競合を防ぎます。
+    """
+    return await controller.process_shipment(request)
+
+@app.post(
+    "/api/v1/shipments/history",
+    response_model=dict,
+    tags=["Shipments"]
+)
+async def get_shipment_history(request: HistoryRequest):
+    """
+    指定された商品の出庫履歴を取得します。
+    """
+    return await controller.get_shipment_history(request)
+
+@app.post(
+    "/api/v1/inventory/check",
+    response_model=dict,
+    tags=["Inventory"]
+)
+async def check_inventory(request: InventoryCheckRequest):
+    """
+    在庫状況を確認し、再発注が必要なアイテムを特定します。
+    """
+    return await controller.check_inventory(request)
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc: HTTPException):
+    """HTTPException用のカスタムハンドラー"""
+    return ErrorResponse(
+        error_code="HTTP_ERROR",
+        message=exc.detail,
+        details={"status_code": exc.status_code}
+    )
+----
+
+'''
+
+== DDDの切り方（詳細実務ガイド）
+
+ドメイン駆動設計を実際のプロジェクトで適用する際の、具体的な手順と判断基準を示します。
+
+=== ユビキタス言語の確立
+
+ユビキタス言語とは、ビジネスの専門家と開発者が共有する共通の語彙です。
+
+[source,text]
+----
+【悪い例】
+ビジネス側: 「商品を出荷する」
+開発側: 「item_tableのstatusフラグを2に更新する」
+
+【良い例】
+共通: 「WarehouseItemをshipする」
+→ コードにもshipメソッドが存在し、ビジネスルールを直接表現
+----
+
+実践手順：
+1. ドメインエキスパートとの会話を録音・記録
+2. 頻出する名詞と動詞をリストアップ
+3. 曖昧な用語を明確化（例：「処理」→「検証」「承認」「実行」に分解）
+4. 用語集を作成し、コードの命名規則に反映
+
+=== Bounded Context（境界づけられたコンテキスト）の識別
+
+同じ用語でも、文脈によって意味が異なる場合、それぞれを別のBounded Contextとして分離します。
+
+[source,text]
+----
+例：「商品」という用語
+
+【販売コンテキスト】
+- 価格、割引率、販促情報が重要
+- ProductForSale { price, discount, campaign }
+
+【在庫コンテキスト】
+- 数量、位置、発注点が重要
+- WarehouseItem { quantity, location, reorderPoint }
+
+【配送コンテキスト】
+- 重量、サイズ、配送制限が重要
+- ShippingItem { weight, dimensions, restrictions }
+----
+
+識別のヒント：
+- 異なるチームが管理している領域
+- 異なるデータの更新頻度
+- 異なるビジネスルール
+- 異なるライフサイクル
+
+=== Aggregate（集約）の設計
+
+Aggregateは、一貫性境界を定義する関連オブジェクトのまとまりです。
+
+設計原則：
+1. **小さく保つ**: 1つのAggregateは1つのエンティティ＋関連VOが基本
+2. **トランザクション境界と一致**: 1トランザクション＝1 Aggregate更新
+3. **ID参照で結合**: Aggregate間は直接参照せず、IDで参照
+
+[source,python]
+----
+# 悪い例：大きすぎるAggregate
+class Order:
+    def __init__(self):
+        self.customer = Customer()  # 別Aggregateを直接含む
+        self.items = [Item(), Item()]  # 商品も直接含む
+        self.payment = Payment()  # 決済も含む
+        # → トランザクションが巨大になり、競合が頻発
+
+# 良い例：適切なサイズのAggregate
+class Order:
+    def __init__(self):
+        self.order_id = OrderId()
+        self.customer_id = CustomerId()  # ID参照
+        self.order_lines = [OrderLine(), OrderLine()]  # VOとして含む
+        self.total_amount = Money()
+        
+class Customer:  # 別Aggregate
+    def __init__(self):
+        self.customer_id = CustomerId()
+        self.credit_limit = Money()
+----
+
+=== Entity vs Value Object の判定基準
+
+[options="header", cols="1,2,2"]
+|===
+| 観点 | Entity | Value Object
+
+| 識別
+| IDで識別（同じIDなら同一）
+| 属性で識別（全属性が同じなら同一）
+
+| 可変性
+| 状態が変化する
+| 不変（新しいインスタンスを作る）
+
+| ライフサイクル
+| 作成→更新→削除の流れ
+| 作成のみ（置き換え）
+
+| 例
+| User, Order, Product
+| Money, Email, Address, Quantity
+|===
+
+実装例：
+[source,python]
+----
+# Entity
+class User:
+    def __init__(self, user_id: UserId, email: Email):
+        self.user_id = user_id  # 識別子
+        self.email = email
+    
+    def change_email(self, new_email: Email):
+        self.email = new_email  # 状態が変化
+    
+    def __eq__(self, other):
+        return self.user_id == other.user_id  # IDで比較
+
+# Value Object
+@dataclass(frozen=True)
+class Email:
+    value: str
+    
+    def __post_init__(self):
+        if not self._is_valid_email(self.value):
+            raise ValueError(f"Invalid email: {self.value}")
+    
+    def __eq__(self, other):
+        return self.value == other.value  # 値で比較
+----
+
+'''
+
+== トランザクション境界と整合性の実装
+
+=== 強整合性（同一トランザクション）
+
+1つのAggregateの更新は、必ず同一トランザクション内で完結させます。
+
+[source,python]
+----
+# アプリケーション層でトランザクション管理
+class OrderApplication:
+    async def place_order(self, request: PlaceOrderRequest):
+        async with self.transaction_manager.begin():
+            # 1つのAggregateの更新
+            order = Order.create(
+                customer_id=request.customer_id,
+                items=request.items
+            )
+            order.calculate_total()
+            order.validate()
+            
+            await self.order_repository.save(order)
+            # トランザクションコミット（自動）
+----
+
+=== 結果整合性（イベント駆動）
+
+複数のAggregateや境界を跨ぐ更新は、イベントで非同期に伝播させます。
+
+[source,python]
+----
+# ドメインイベント
+@dataclass(frozen=True)
+class OrderPlacedEvent:
+    order_id: str
+    customer_id: str
+    total_amount: Decimal
+    occurred_at: datetime
+
+# イベント発行側
+class OrderService:
+    async def place_order(self, order: Order):
+        async with self.transaction_manager.begin():
+            # 注文を保存
+            await self.order_repository.save(order)
+            
+            # イベントをOutboxテーブルに保存（同一トランザクション）
+            event = OrderPlacedEvent(
+                order_id=order.order_id,
+                customer_id=order.customer_id,
+                total_amount=order.total_amount,
+                occurred_at=datetime.now()
+            )
+            await self.outbox_repository.save(event)
+
+# イベント処理側（別サービス/別トランザクション）
+class InventoryEventHandler:
+    async def handle_order_placed(self, event: OrderPlacedEvent):
+        # 在庫を減らす（別Aggregate）
+        for item in event.items:
+            inventory = await self.inventory_repository.find(item.product_id)
+            inventory.reserve(item.quantity)
+            await self.inventory_repository.save(inventory)
+----
+
+=== アウトボックスパターンの実装
+
+[source,sql]
+----
+-- Outboxテーブル
+CREATE TABLE outbox_events (
+    event_id UUID PRIMARY KEY,
+    aggregate_id VARCHAR(100),
+    event_type VARCHAR(100),
+    payload JSONB,
+    created_at TIMESTAMP,
+    published_at TIMESTAMP NULL,
+    status VARCHAR(20) DEFAULT 'PENDING'
+);
+
+-- インデックス
+CREATE INDEX idx_outbox_status ON outbox_events(status, created_at);
+----
+
+[source,python]
+----
+# Outboxポーラー
+class OutboxPublisher:
+    async def publish_pending_events(self):
+        while True:
+            # 未送信イベントを取得
+            events = await self.db.fetch("""
+                SELECT * FROM outbox_events 
+                WHERE status = 'PENDING' 
+                ORDER BY created_at 
+                LIMIT 100
+                FOR UPDATE SKIP LOCKED
+            """)
+            
+            for event in events:
+                try:
+                    # メッセージブローカーへ送信
+                    await self.message_broker.publish(
+                        topic=event['event_type'],
+                        message=event['payload']
+                    )
+                    
+                    # ステータス更新
+                    await self.db.execute("""
+                        UPDATE outbox_events 
+                        SET status = 'PUBLISHED', published_at = NOW()
+                        WHERE event_id = $1
+                    """, event['event_id'])
+                    
+                except Exception as e:
+                    logger.error(f"Failed to publish event {event['event_id']}: {e}")
+            
+            await asyncio.sleep(1)  # 1秒待機
+----
+
+'''
+
+== 例外設計の実装詳細
+
+=== 層ごとの例外定義
+
+[source,python]
+----
+# ドメイン層の例外
+class DomainError(Exception):
+    """ドメイン層の基底例外"""
+    def __init__(self, message: str, code: str = None):
+        super().__init__(message)
+        self.code = code
+
+class BusinessRuleViolation(DomainError):
+    """ビジネスルール違反"""
+    pass
+
+class InvariantViolation(DomainError):
+    """不変条件違反"""
+    pass
+
+class EntityNotFound(DomainError):
+    """エンティティが見つからない"""
+    def __init__(self, entity_type: str, entity_id: str):
+        super().__init__(
+            f"{entity_type} not found: {entity_id}",
+            code="ENTITY_NOT_FOUND"
+        )
+        self.entity_type = entity_type
+        self.entity_id = entity_id
+
+# アプリケーション層の例外
+class ApplicationError(Exception):
+    """アプリケーション層の基底例外"""
+    pass
+
+class UseCaseError(ApplicationError):
+    """ユースケースエラー"""
+    pass
+
+class AuthorizationError(ApplicationError):
+    """認可エラー"""
+    pass
+
+# インフラ層の例外
+class InfrastructureError(Exception):
+    """インフラ層の基底例外"""
+    pass
+
+class DatabaseError(InfrastructureError):
+    """データベースエラー"""
+    pass
+
+class ExternalServiceError(InfrastructureError):
+    """外部サービスエラー"""
+    pass
+----
+
+=== 例外のマッピング（アダプター層）
+
+[source,python]
+----
+# HTTPステータスへのマッピング
+class ExceptionMapper:
+    @staticmethod
+    def to_http_response(exception: Exception) -> tuple[int, dict]:
+        """例外をHTTPレスポンスに変換"""
+        
+        if isinstance(exception, EntityNotFound):
+            return 404, {
+                "error": "NOT_FOUND",
+                "message": str(exception),
+                "details": {
+                    "entity_type": exception.entity_type,
+                    "entity_id": exception.entity_id
+                }
+            }
+        
+        elif isinstance(exception, BusinessRuleViolation):
+            return 422, {
+                "error": "BUSINESS_RULE_VIOLATION",
+                "message": str(exception),
+                "code": exception.code
+            }
+        
+        elif isinstance(exception, ConcurrencyConflictError):
+            return 409, {
+                "error": "CONFLICT",
+                "message": "Resource was modified by another process",
+                "retry_after": 1
+            }
+        
+        elif isinstance(exception, AuthorizationError):
+            return 403, {
+                "error": "FORBIDDEN",
+                "message": "You don't have permission to perform this action"
+            }
+        
+        elif isinstance(exception, ValidationError):
+            return 400, {
+                "error": "VALIDATION_ERROR",
+                "message": str(exception),
+                "fields": exception.fields if hasattr(exception, 'fields') else []
+            }
+        
+        else:
+            # 予期しない例外は詳細を隠す
+            logger.error(f"Unexpected error: {exception}", exc_info=True)
+            return 500, {
+                "error": "INTERNAL_SERVER_ERROR",
+                "message": "An unexpected error occurred"
+            }
+
+# FastAPIでの使用例
+@app.exception_handler(DomainError)
+async def domain_exception_handler(request: Request, exc: DomainError):
+    status_code, content = ExceptionMapper.to_http_response(exc)
+    return JSONResponse(status_code=status_code, content=content)
+----
+
+'''
+
+== テスト戦略の実装
+
+=== ドメイン層のユニットテスト
+
+[source,python]
+----
+# test_warehouse_item.py
+import pytest
+from domain.entities.warehouse import WarehouseItem, Quantity, Location
+from domain.exceptions import NotEnoughStockError
+
+class TestWarehouseItem:
+    def test_ship_reduces_quantity(self):
+        # Arrange
+        item = WarehouseItem(
+            item_id="ITEM001",
+            name="Test Item",
+            quantity=Quantity(100),
+            location=Location("A", 1, 1),
+            # ... 他のフィールド
+        )
+        
+        # Act
+        item.ship(Quantity(30))
+        
+        # Assert
+        assert item.quantity.value == 70
+    
+    def test_ship_with_insufficient_stock_raises_error(self):
+        # Arrange
+        item = WarehouseItem(
+            item_id="ITEM001",
+            name="Test Item",
+            quantity=Quantity(10),
+            # ...
+        )
+        
+        # Act & Assert
+        with pytest.raises(NotEnoughStockError) as exc_info:
+            item.ship(Quantity(20))
+        
+        assert "Not enough stock" in str(exc_info.value)
+    
+    def test_needs_reorder_when_below_reorder_point(self):
+        # Arrange
+        item = WarehouseItem(
+            item_id="ITEM001",
+            name="Test Item",
+            quantity=Quantity(5),
+            reorder_point=Quantity(10),
+            # ...
+        )
+        
+        # Act & Assert
+        assert item.needs_reorder() is True
+----
+
+=== ユースケースのテスト（モック使用）
+
+[source,python]
+----
+# test_shipment_interactor.py
+import pytest
+from unittest.mock import AsyncMock, Mock
+from domain.usecases.shipment_interactor import ShipmentInteractor
+from domain.services.warehouse_service import WarehouseService
+from domain.entities.warehouse import WarehouseItem, ShipmentRecord, Quantity
+
+@pytest.mark.asyncio
+class TestShipmentInteractor:
+    async def test_successful_shipment(self):
+        # Arrange
+        mock_repository = AsyncMock()
+        mock_notification = AsyncMock()
+        mock_tracking = AsyncMock()
+        mock_presenter = Mock()
+        
+        # テストデータ
+        test_item = WarehouseItem(
+            item_id="ITEM001",
+            name="Test Item",
+            quantity=Quantity(100),
+            # ...
+        )
+        test_record = ShipmentRecord(
+            record_id="REC001",
+            item_id="ITEM001",
+            quantity=Quantity(10),
+            # ...
+        )
+        
+        # モックの設定
+        mock_repository.find_item_by_id.return_value = test_item
+        mock_tracking.generate_tracking_number.return_value = "TRACK123"
+        
+        service = WarehouseService(
+            mock_repository,
+            mock_notification,
+            mock_tracking
+        )
+        interactor = ShipmentInteractor(service, mock_repository)
+        
+        # Act
+        await interactor.process_shipment_request(
+            item_id="ITEM001",
+            quantity=10,
+            destination="Tokyo",
+            shipped_by="Test User",
+            presenter=mock_presenter
+        )
+        
+        # Assert
+        mock_repository.find_item_by_id.assert_called_once_with("ITEM001")
+        mock_repository.save_item.assert_called_once()
+        mock_notification.notify_shipment_completed.assert_called_once()
+        mock_presenter.present_shipment_success.assert_called_once()
+        mock_presenter.present_stock_status.assert_called_once()
+    
+    async def test_shipment_with_insufficient_stock(self):
+        # Arrange
+        mock_repository = AsyncMock()
+        mock_presenter = Mock()
+        
+        test_item = WarehouseItem(
+            item_id="ITEM001",
+            name="Test Item",
+            quantity=Quantity(5),  # 在庫不足
+            # ...
+        )
+        
+        mock_repository.find_item_by_id.return_value = test_item
+        
+        # ... サービスとインタラクターのセットアップ
+        
+        # Act
+        await interactor.process_shipment_request(
+            item_id="ITEM001",
+            quantity=10,  # 在庫より多い
+            destination="Tokyo",
+            shipped_by="Test User",
+            presenter=mock_presenter
+        )
+        
+        # Assert
+        mock_presenter.present_error.assert_called_once()
+        error_call = mock_presenter.present_error.call_args
+        assert "INSUFFICIENT_STOCK" in error_call[0][1]
+----
+
+=== 統合テスト（リポジトリ層）
+
+[source,python]
+----
+# test_postgresql_repository.py
+import pytest
+import asyncpg
+from adapters.repositories.postgresql_warehouse_repository import PostgreSQLWarehouseRepository
+from domain.entities.warehouse import WarehouseItem, Quantity, Location
+
+@pytest.mark.integration
+class TestPostgreSQLWarehouseRepository:
+    @pytest.fixture
+    async def db_pool(self):
+        # テスト用データベース接続
+        pool = await asyncpg.create_pool(
+            "postgresql://test_user:test_pass@localhost/test_db"
+        )
+        
+        # テーブル作成
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS warehouse_items (
+                    item_id VARCHAR(50) PRIMARY KEY,
+                    name VARCHAR(200),
+                    quantity INTEGER,
+                    version INTEGER DEFAULT 0,
+                    -- ... 他のカラム
+                )
+            """)
+        
+        yield pool
+        
+        # クリーンアップ
+        async with pool.acquire() as conn:
+            await conn.execute("DROP TABLE IF EXISTS warehouse_items")
+        await pool.close()
+    
+    async def test_save_and_find_item(self, db_pool):
+        # Arrange
+        repository = PostgreSQLWarehouseRepository(db_pool)
+        item = WarehouseItem(
+            item_id="TEST001",
+            name="Test Item",
+            quantity=Quantity(50),
+            location=Location("A", 1, 1),
+            # ...
+        )
+        
+        # Act
+        await repository.save_item(item)
+        retrieved = await repository.find_item_by_id("TEST001")
+        
+        # Assert
+        assert retrieved is not None
+        assert retrieved.item_id == "TEST001"
+        assert retrieved.name == "Test Item"
+        assert retrieved.quantity.value == 50
+    
+    async def test_optimistic_locking(self, db_pool):
+        # Arrange
+        repository = PostgreSQLWarehouseRepository(db_pool)
+        item = WarehouseItem(
+            item_id="TEST002",
+            name="Test Item",
+            quantity=Quantity(100),
+            version=0,
+            # ...
+        )
+        await repository.save_item(item)
+        
+        # 2つの同時更新をシミュレート
+        item1 = await repository.find_item_by_id("TEST002")
+        item2 = await repository.find_item_by_id("TEST002")
+        
+        item1.ship(Quantity(10))
+        item2.ship(Quantity(20))
+        
+        # Act & Assert
+        await repository.save_item(item1, expected_version=0)  # 成功
+        
+        with pytest.raises(ConcurrencyConflictError):
+            await repository.save_item(item2, expected_version=0)  # 失敗
+----
+
+'''
+
+== まとめ
+
+本資料では、ドメイン中心アーキテクチャの原則から実装まで、包括的に解説しました。
+
+=== 重要なポイントの再確認
+
+1. **依存は常に内向き**: ドメインは技術的詳細に依存しない
+2. **契約（Port）はドメインが定義**: 外界がドメインに合わせる
+3. **1ユースケース＝1アグリゲート更新**: トランザクション境界を明確に
+4. **結果整合性で境界を跨ぐ**: イベント駆動で疎結合を維持
+5. **例外は層ごとに分類**: 外部表現への変換はアダプターで
+6. **テストは層ごとに**: ドメインは純粋、統合テストは最小限
+
+=== 段階的な導入アプローチ
+
+既存システムからの移行は、以下の順序で進めることを推奨します：
+
+1. **第1段階**: 新機能から適用
+   - 新しいユースケースをクリーンに実装
+   - 既存コードはアダプターでラップ
+
+2. **第2段階**: ドメインモデルの抽出
+   - ビジネスロジックをエンティティ/VOに移動
+   - 貧血モデルからの脱却
+
+3. **第3段階**: 境界の明確化
+   - Bounded Contextの識別
+   - アグリゲートの再設計
+
+4. **第4段階**: イベント駆動への移行
+   - 同期処理から非同期への段階的移行
+   - アウトボックスパターンの導入
+
+5. **第5段階**: 継続的な改善
+   - メトリクスによる効果測定
+   - チームの習熟度向上
+
+=== よくある落とし穴と対策
+
+**落とし穴1: 過度な抽象化**
+- 対策: YAGNI原則。必要になってから抽象化
+
+**落とし穴2: 巨大なアグリゲート**
+- 対策: 小さく保つ。ID参照で結合
+
+**落とし穴3: ドメインへの技術漏れ**
+- 対策: import-linter等で自動チェック
+
+**落とし穴4: 貧血ドメインモデル**
+- 対策: Tell, Don't Ask。振る舞いをエンティティへ
+
+**落とし穴5: 同期的な境界跨ぎ**
+- 対策: イベント駆動で疎結合化
+
+=== 効果測定の指標
+
+アーキテクチャ改善の効果を以下の指標で測定します：
+
+- **開発速度**: 機能追加にかかる時間
+- **バグ率**: リリース後の不具合数
+- **テストカバレッジ**: 特にドメイン層
+- **ビルド時間**: 並列テストによる高速化
+- **認知的負荷**: コードレビュー時間
+- **依存関係**: 循環依存の数（ゼロが目標）
+
+'''
+
+== 付録A: 用語集
+
+[options="header", cols="1,3"]
+|===
+| 用語 | 説明
+
+| Entity（エンティティ）
+| 識別子によって区別され、ライフサイクルを持つオブジェクト
+
+| Value Object（値オブジェクト）
+| 値によって区別され、不変であることが多いオブジェクト
+
+| Aggregate（集約）
+| 一貫性境界を定義する関連オブジェクトのまとまり
+
+| Repository（リポジトリ）
+| 集約の永続化と取得を抽象化する契約
+
+| Port（ポート）
+| ドメインが定義する外界との契約（インターフェース）
+
+| Adapter（アダプター）
+| Portを実装し、外界と接続する具象実装
+
+| Bounded Context
+| モデルが適用される明確な境界
+
+| Ubiquitous Language
+| ビジネスと開発で共有される共通言語
+
+| Domain Service
+| 特定のエンティティに属さないドメインロジック
+
+| Application Service
+| ユースケースの調整とトランザクション管理
+
+| Use Case（Interactor）
+| アプリケーション固有の業務フロー
+
+| DTO
+| Data Transfer Object。境界を跨ぐデータ運搬用オブジェクト
+
+| DIP
+| Dependency Inversion Principle。依存性逆転の原則
+
+| DI
+| Dependency Injection。依存性の注入
+
+| 強整合性
+| 同一トランザクション内での即座の整合性
+
+| 結果整合性
+| 時間差はあるが最終的に整合する状態
+
+| Outbox Pattern
+| トランザクショナルなイベント発行パターン
+
+| 楽観的ロック
+| バージョン番号による競合検出
+
+| 貧血モデル
+| ロジックを持たないデータのみのモデル（アンチパターン）
+|===
+
